@@ -75,4 +75,6 @@ SevenZipResult rc = sevenzip_extract_single_lzma1(
 
 2026-11-22 使用 Clang 23.1.5（i686 Windows 目标，`/O1`）、NASM 3.01 和本机 Windows SDK/MSVC 兼容运行库构建。基础 API 测试和发布版 smoke test 通过。另用 7-Zip 26.04 生成 235 组原始 LZMA1 压力用例，覆盖 API 接受的属性组合和最长 1 MiB 码流。`forTest/` 中 12 个现有 7z 归档，以及新生成的 50 个 LZMA1 归档，都在 release/debug 构建下解码成功并与 7-Zip 解压结果逐字节一致。50 例清单和结果保存在 `work/stress_sevenzip_50_20261122_104801_625/results.csv`；forTest 结果在 `work/forTest_decode_20261122_104754_505/results.csv`。测试程序编译有 `fopen` 弃用提示，不影响构建和运行。
 
-调试版会填写 `dst_size` 并校验实际输出长度；发布版不读写 `dst_size`，可传 `NULL`，由汇编直接解码。当前版本的 `lzma_c_api_decode` `.text` 为发布版 47 字节、调试版 235 字节；汇编段为 534/550 字节；包含 7z 容器层的静态库为 8,672/9,256 字节。这些大小不等同于最终 EXE 的净增量。
+调试版会填写 `dst_size` 并校验实际输出长度；发布版不读写 `dst_size`，可传 `NULL`，由汇编直接解码。项目构建脚本按 `/O1` 编译时，`lzma_c_api_decode` `.text` 为发布版 47 字节、调试版 235 字节；汇编段为 534/550 字节；包含 7z 容器层的静态库为 8,672/9,256 字节。这些大小不等同于最终 EXE 的净增量。
+
+另用 Clang 23.1.5 的 `-Oz -ffunction-sections` 单独编译 C 文件，并从 COFF 函数段统计代码字节：7z 容器函数合计 2,344/2,567 字节（release/debug），`lzma_c_api_decode` 包装为 47/216 字节，NASM 解码核心为 534/550 字节。三部分合计 2,925/3,333 字节。汇编核心不受 Clang `-Oz` 影响；`read_u32le`、`read_u64le`、`reader_number`、`decode_properties` 等小函数在 `-Oz` 下被内联。该统计不含运行库依赖、常量数据、对齐和最终链接裁剪，因此不同于最终 EXE 的增量。

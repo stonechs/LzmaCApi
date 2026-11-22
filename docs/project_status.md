@@ -15,8 +15,7 @@ Updated: 2026-11-22
   `work/stress_sevenzip_50_20261122_104801_625/results.csv`。
 - 2026-11-22：Clang 23.1.5 / i686、NASM 3.01 构建通过；原有 API、release
   smoke、单文件 7z 正常与错误输入测试均通过。
-- V0.5.2 实现提交：`5c88d5fc3fd1ca1c9ac6988a45f574e52e678de2`，标签 `V0.5.2`；
-  本轮测试宏和压力测试变更尚待提交，计划标记 `V0.5.3`。
+- V0.5.3 实现提交：`9608a829bb3e78abb93ceab50ed8593317009cba`，标签 `V0.5.3`。
 - 后续：需要覆盖 LZMA2 时，须先为现有解码核心增加 LZMA2 chunk/state 支持；
   当前没有其他待做项。
 
@@ -68,6 +67,29 @@ Updated: 2026-11-22
   debug. The assembly `.lzma` section is 534/550 bytes; static libraries with the
   container layer are 8,672/9,256 bytes. These are object/section and archive sizes, not final EXE
   size deltas.
+- Clang 23.1.5 `-Oz -ffunction-sections`, i686 MSVC COFF, function COMDAT raw sizes:
+
+  | Function | Release bytes | Debug bytes |
+  | --- | ---: | ---: |
+  | `sevenzip_extract_single_lzma1` | 451 | 544 |
+  | `parse_streams` | 673 | 673 |
+  | `decode_folder` | 274 | 347 |
+  | `parse_header` | 559 | 559 |
+  | `reader_byte` | 28 | 28 |
+  | `reader_size` | 166 | 166 |
+  | `read_digest_vector` | 99 | 99 |
+  | `reader_take` | 55 | 55 |
+  | `reader_u32` | 39 | 39 |
+  | `crc32_bytes` | — | 57 |
+  | **7z container C total** | **2,344** | **2,567** |
+  | `lzma_c_api_decode` wrapper | 47 | 216 |
+  | NASM LZMA core (`.lzma`) | 534 | 550 |
+  | **Combined code sections** | **2,925** | **3,333** |
+
+  `read_u32le`, `read_u64le`, `reader_number`, and `decode_properties` are inlined
+  under `-Oz`. Assembly is not compiled by Clang, so its section is reported as-is.
+  The totals exclude runtime-library functions, constants, alignment, and link-time
+  dead-code removal; they are not final executable size deltas.
 - An earlier runtime-property build on an Intel N100 was compared with the
   7-Zip 26.04 x86 CLI using the same LZMA1 streams. It measured 903 vs 757 MiB/s
   on 128 MiB repeated data and 9.16 vs 12.78 MiB/s on 16 MiB random data. Those
