@@ -35,7 +35,7 @@
 
 ## 输入与安全限制
 
-接口接收原始 LZMA1 range stream，不接收 `.lzma` 头或 7z 容器头。调用者需从外层格式取得 `lc`、`lp`、`pb` 及精确的解压长度；传入的码流至少包含 5 字节 range initializer，且首字节为 0。当前解码核心要求码流带 LZMA end marker。
+接口接收原始 LZMA1 range stream，不接收 `.lzma` 头或 7z 容器头。调用者需从外层格式取得 `lc`、`lp`、`pb` 及精确的解压长度；传入的码流至少包含 5 字节 range initializer，且首字节为 0。解码按指定的解压长度停止，不要求码流带 LZMA end marker。若 end marker 提前出现，`dst_size` 会小于目标长度；调试版报告码流无效，发布版由调用者检查 `dst_size`。
 
 尽管 API 接收 `src_size`，解码核心读取压缩数据时不会检查输入边界；损坏或截断的输入可能导致越界读写。它也不能安全处理不可信输入。请只对可信、完整且属性和解压长度正确的码流调用。实现仅支持 32 位 Windows，并会在运行时分配可执行内存。
 

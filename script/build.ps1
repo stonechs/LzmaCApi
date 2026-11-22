@@ -4,20 +4,25 @@ $build = Join-Path $root 'build'
 $src = Join-Path $root 'SRC'
 $asm = Join-Path $src 'lzma_static_x86.asm'
 New-Item -ItemType Directory -Force -Path $build | Out-Null
-nasm -f bin -O9 $asm -o (Join-Path $build 'static_x86.bin')
-$bytes = [IO.File]::ReadAllBytes((Join-Path $build 'static_x86.bin'))
-$lines = [Collections.Generic.List[string]]::new()
-$lines.Add('#ifndef LZMA_STATIC_X86_BLOB_H')
-$lines.Add('#define LZMA_STATIC_X86_BLOB_H')
-$lines.Add('static const unsigned char lzma_static_x86_blob[] = {')
-for ($i = 0; $i -lt $bytes.Length; $i += 16) {
-    $last = [Math]::Min($i + 15, $bytes.Length - 1)
-    $chunk = $bytes[$i..$last] | ForEach-Object { '0x{0:x2}' -f $_ }
-    $lines.Add('    ' + ($chunk -join ', ') + ',')
+function Write-BlobHeader($binaryPath, $headerPath, $guard) {
+    $bytes = [IO.File]::ReadAllBytes($binaryPath)
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add("#ifndef $guard")
+    $lines.Add("#define $guard")
+    $lines.Add('static const unsigned char lzma_static_x86_blob[] = {')
+    for ($i = 0; $i -lt $bytes.Length; $i += 16) {
+        $last = [Math]::Min($i + 15, $bytes.Length - 1)
+        $chunk = $bytes[$i..$last] | ForEach-Object { '0x{0:x2}' -f $_ }
+        $lines.Add('    ' + ($chunk -join ', ') + ',')
+    }
+    $lines.Add('};')
+    $lines.Add('#endif')
+    [IO.File]::WriteAllLines($headerPath, $lines)
 }
-$lines.Add('};')
-$lines.Add('#endif')
-[IO.File]::WriteAllLines((Join-Path $src 'static_x86_blob.h'), $lines)
+nasm -f bin -O9 $asm -o (Join-Path $build 'static_x86.bin')
+Write-BlobHeader (Join-Path $build 'static_x86.bin') (Join-Path $src 'static_x86_blob.h') 'LZMA_STATIC_X86_BLOB_H'
+nasm -f bin -O9 -D LZMA_C_API_DEBUG=1 $asm -o (Join-Path $build 'static_x86_debug.bin')
+Write-BlobHeader (Join-Path $build 'static_x86_debug.bin') (Join-Path $src 'static_x86_blob_debug.h') 'LZMA_STATIC_X86_BLOB_DEBUG_H'
 $clangCommand = Get-Command clang-cl -ErrorAction SilentlyContinue
 $linkerCommand = Get-Command lld-link -ErrorAction SilentlyContinue
 if (-not $clangCommand) {

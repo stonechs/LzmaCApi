@@ -22,8 +22,9 @@ typedef enum LzmaCApiResult {
  * 本接口解码原始 LZMA1 range stream，不接受 .lzma 文件头或 7z 容器头。
  * 调用者应从外层容器取得 lc、lp、pb 和解压后的精确字节数 output_size，
  * 并将压缩数据中 13 字节容器头之后的 range stream 传给本接口。range
- * stream 至少 5 字节，首字节必须为 0；当前静态解码核心要求码流包含
- * LZMA end marker。
+ * stream 至少 5 字节，首字节必须为 0。解码以 output_size 为结束条件，
+ * 因此不要求码流带 LZMA end marker。若 end marker 提前出现，dst_size 会
+ * 小于 output_size；调试构建会报告码流无效，精简构建由调用者检查长度。
  *
  * 基本调用步骤：
  *   1. 按下式计算 workspace 字节数，并分配 workspace 和 dst：
@@ -49,7 +50,8 @@ typedef enum LzmaCApiResult {
  * 调用者提供并按上述公式分配；dst_capacity 必须不小于 output_size。
  * src、dst、workspace 和 dst_size 必须指向有效内存，
  * 输入、输出和 workspace 缓冲区不得重叠。output_size 为 0 时 dst 可以为
- * NULL。
+ * NULL。发布构建按调用者提供的长度停止；调试构建还会检查单个匹配是否
+ * 会跨越目标输出末尾。
  * 定义 LZMA_C_API_DEBUG 时会检查这些参数；精简构建省略参数检查，调用者
  * 必须自行保证所有约束，否则可能崩溃或越界读写。
  *
@@ -57,8 +59,7 @@ typedef enum LzmaCApiResult {
  *   LZMA_C_API_OK                  解码成功；dst_size 为实际输出长度。
  *   LZMA_C_API_INVALID_ARGUMENT    （仅调试构建）参数为空、属性越界、输入少于
  *                                  5 字节，或 range initializer 首字节非 0。
- *   LZMA_C_API_INVALID_STREAM      内部解码模板异常，或解码长度与
- *                                  output_size 不一致。
+ *   LZMA_C_API_INVALID_STREAM      （仅调试构建）解码长度与 output_size 不一致。
  *   LZMA_C_API_OUTPUT_TOO_SMALL    （仅调试构建）输出容量不足或非空输出时 dst 为空。
  *   LZMA_C_API_WORKSPACE_TOO_SMALL （仅调试构建）workspace 小于所需大小。
  *   LZMA_C_API_ALLOCATION_FAILED   Windows 无法分配运行时解码代码所需内存。

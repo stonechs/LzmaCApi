@@ -21,18 +21,36 @@
 BITS 32
 ORG 0
 section .text
-	dd _code_end - _code
+	dd _exec_end - _exec_start
 
 ; code = bswap32(*(uint32_t*)(src+5+8+1))
 ; pb = (1 << first / 9 / 5) - 1
 ; lp = (1 << first / 9 % 5) - 1
 ; lc = first % 9
 
-	dd _rel_code - 4 - _code
-	dd _rel_tsize - 4 - _code
-	dd _rel_pb - 1 - _code
-	dd _rel_lp - 1 - _code
-	dd _rel_lc - 1 - _code
+	dd _rel_code - 4 - _exec_start
+	dd _rel_tsize - 4 - _exec_start
+	dd _rel_pb - 1 - _exec_start
+	dd _rel_lp - 1 - _exec_start
+	dd _rel_lc - 1 - _exec_start
+	dd _rel_src - 4 - _exec_start
+	dd _rel_dst - 4 - _exec_start
+	dd _rel_workspace - 4 - _exec_start
+	dd _rel_dst_end - 4 - _exec_start
+
+; Complete callable wrapper. C patches the data pointers and output end address.
+_exec_start:
+	push	edi
+	push	esi
+	push	ebx
+	push	dword 0x12345678
+_rel_dst_end:
+	push	dword 0x12345678
+_rel_src:
+	push	dword 0x12345678
+_rel_dst:
+	push	dword 0x12345678
+_rel_workspace:
 
 _code:
 
@@ -61,6 +79,7 @@ LOC _state
 %define Src dword [ebp+12]
 %define Dest dword [ebp+8]
 %define Temp dword [ebp+4]
+%define DestEnd dword [ebp+16]
 
 _start:	enter	0, 0
 	push	0x12345678	; Code
@@ -117,7 +136,11 @@ _rc_norm:
 .1:	ret
 
 _loop1:	pop	_rc_bit
-_loop:	mov	ecx, Dest
+	; Stop once the requested output range is complete.
+_loop:	mov	eax, Dest
+	cmp	eax, DestEnd
+	jae	_end
+	mov	ecx, Dest
 	mov	bh, 0x55
 _rel_lp:
 	pop	esi		; _state
@@ -303,6 +326,15 @@ _case_model:
 	mov	_rep0, ecx
 	je	_end
 _copy:	pop	edx
+%ifdef LZMA_C_API_DEBUG
+	; Reject a match that would cross the requested output boundary.
+	mov	ecx, edx
+	inc	ecx
+	mov	eax, DestEnd
+	sub	eax, Dest
+	cmp	ecx, eax
+	ja	_end
+%endif
 .1:	mov	eax, Dest
 	sub	eax, _rep0
 	movzx	ebx, byte [eax]
@@ -313,4 +345,12 @@ _copy:	pop	edx
 	jns	.1
 	jmp	_loop
 _end:	leave
-_code_end:
+	pop	ecX		; workspace
+	pop	eax		; decoded destination pointer
+	pop	ecx		; src + 5
+	pop	ecx		; destination end pointer
+	pop	ebx
+	pop	esi
+	pop	edi
+	ret
+_exec_end:
