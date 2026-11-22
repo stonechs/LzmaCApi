@@ -16,8 +16,8 @@ Updated: 2026-11-22
   `work/stress_sevenzip_50_20261122_111055_800/results.csv`。
 - 2026-11-22：Clang 23.1.5 / i686、NASM 3.01 构建通过；原有 API、release
   smoke、单文件 7z 正常与错误输入测试均通过。
-- V0.5.3 基线提交：`9608a829bb3e78abb93ceab50ed8593317009cba`，标签 `V0.5.3`；
-  本轮收窄版待标记 `V0.5.4`。
+- V0.5.4 提交：`f1591ae69b1a494bae9b0b93a6cfe8346c6e3a8b`，标签 `V0.5.4`；
+  V0.5.3 基线为 `9608a829bb3e78abb93ceab50ed8593317009cba`。
 - 后续：需要覆盖 LZMA2 时，须先为现有解码核心增加 LZMA2 chunk/state 支持；
   当前没有其他待做项。
 
