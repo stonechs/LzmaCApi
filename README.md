@@ -1,10 +1,10 @@
 # LzmaCApi
 
-一个面向 32 位 Windows 的 C API 封装，调用 Ilya Kurdyukov 的 x86 静态 micro-LZMA 解码核心（CC BY 3.0）。封装在运行时生成并执行解码代码，构建出的静态库内嵌了解码器机器码模板。
+一个面向 32 位 Windows 的 C API 封装，调用 Ilya Kurdyukov 的 x86 静态 micro-LZMA 解码核心（CC BY 3.0）。C API 和解码汇编静态链接；调用时由汇编准备入口把本次参数修补进解码指令，再执行解码主体。
 
 ## 目录结构
 
-- `SRC/`：C API、x86 汇编源码、生成的机器码头文件及 API 测试程序。
+- `SRC/`：C API、x86 汇编源码及 API 测试程序。
 - `script/`：构建脚本和 LZMA 测试数据生成脚本。
 - `build/`：构建输出和测试夹具，已由 `.gitignore` 排除。
 - `tools/`：第三方工具存放目录，已排除在 Git 之外。
@@ -19,7 +19,7 @@
 .\script\build.ps1
 ```
 
-构建脚本使用 NASM、Clang/Clang-cl、LLD、Python 3 和 Windows SDK/MSVC 兼容运行库，并生成精简库 `build/lzmacapi_x86.lib` 和带参数校验的 `build/lzmacapi_x86_debug.lib`。脚本会从 `PATH` 或 `%LOCALAPPDATA%\Programs\LLVM` 查找 LLVM 工具。NASM 只在重新生成 `SRC/static_x86_blob.h` 时需要。
+构建脚本使用 NASM、Clang/Clang-cl、LLD、Python 3 和 Windows SDK/MSVC 兼容运行库，并生成精简库 `build/lzmacapi_x86.lib` 和带参数校验的 `build/lzmacapi_x86_debug.lib`。脚本会从 `PATH` 或 `%LOCALAPPDATA%\Programs\LLVM` 查找 LLVM 工具。NASM 将汇编源码编译成 COFF 对象，构建不再生成机器码头文件。
 
 ## API 测试
 
@@ -37,10 +37,12 @@
 
 接口接收原始 LZMA1 range stream，不接收 `.lzma` 头或 7z 容器头。调用者需从外层格式取得 `lc`、`lp`、`pb` 及精确的解压长度；传入的码流至少包含 5 字节 range initializer，且首字节为 0。解码按指定的解压长度停止，不要求码流带 LZMA end marker。若 end marker 提前出现，`dst_size` 会小于目标长度；调试版报告码流无效，发布版由调用者检查 `dst_size`。
 
-尽管 API 接收 `src_size`，解码核心读取压缩数据时不会检查输入边界；损坏或截断的输入可能导致越界读写。它也不能安全处理不可信输入。请只对可信、完整且属性和解压长度正确的码流调用。实现仅支持 32 位 Windows，并会在运行时分配可执行内存。
+尽管 API 接收 `src_size`，解码核心读取压缩数据时不会检查输入边界；损坏或截断的输入可能导致越界读写。它也不能安全处理不可信输入。请只对可信、完整且属性和解压长度正确的码流调用。实现仅支持 32 位 Windows。
+
+汇编代码段在解码前会被原位修改，因此同一进程不能并发调用此 API。C 层临时将独立 `.lzma` 段设为可读、可写、可执行，修补后刷新指令缓存并恢复原页面权限；这些系统操作失败时返回 `LZMA_C_API_CODE_SETUP_FAILED`。C 层不包含汇编立即数的位置或修补表。
 
 ## 当前验证
 
-2026-11-21 使用 Clang 23.1.5（i686 Windows 目标，`/O1`）、NASM 3.01 和本机 Windows SDK/MSVC 兼容运行库构建。三组 API 解码测试及调试版参数错误测试均通过。测试程序编译有一条 `fopen` 弃用提示，不影响构建和运行。
+2026-11-21 使用 Clang 23.1.5（i686 Windows 目标，`/O1`）、NASM 3.01 和本机 Windows SDK/MSVC 兼容运行库构建。三组 API 解码测试及调试版参数错误测试均通过。测试程序编译有 `fopen` 弃用提示，不影响构建和运行。
 
-`dumpbin` 显示精简版 `lzma_c_api_decode` 函数机器码为 274 字节；定义 `LZMA_C_API_DEBUG` 后为 428 字节。嵌入的解码模板为 504 字节；调用时另生成 505 字节的可执行副本。这些是目标文件/运行时代码大小，不等同于最终 EXE 的净增量。
+本次静态链接原型中，C API 目标代码为精简版 198 字节、调试版 395 字节；独立汇编段为精简版 641 字节、调试版 654 字节。大小来自目标文件，不等同于最终 EXE 的净增量。

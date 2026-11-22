@@ -13,7 +13,8 @@ typedef enum LzmaCApiResult {
     LZMA_C_API_INVALID_STREAM,
     LZMA_C_API_OUTPUT_TOO_SMALL,
     LZMA_C_API_WORKSPACE_TOO_SMALL,
-    LZMA_C_API_ALLOCATION_FAILED
+    LZMA_C_API_ALLOCATION_FAILED,
+    LZMA_C_API_CODE_SETUP_FAILED
 } LzmaCApiResult;
 
 /*
@@ -62,12 +63,17 @@ typedef enum LzmaCApiResult {
  *   LZMA_C_API_INVALID_STREAM      （仅调试构建）解码长度与 output_size 不一致。
  *   LZMA_C_API_OUTPUT_TOO_SMALL    （仅调试构建）输出容量不足或非空输出时 dst 为空。
  *   LZMA_C_API_WORKSPACE_TOO_SMALL （仅调试构建）workspace 小于所需大小。
- *   LZMA_C_API_ALLOCATION_FAILED   Windows 无法分配运行时解码代码所需内存。
+ *   LZMA_C_API_ALLOCATION_FAILED   为兼容保留；静态汇编版本不再分配代码缓冲区。
+ *   LZMA_C_API_CODE_SETUP_FAILED   无法临时修改汇编段页面权限或刷新指令缓存。
+ *
+ * 当前实现把参数原位修补到静态汇编代码中，因此同一进程内不能并发调用
+ * 此接口。准备代码时还需修改汇编段页面权限；若权限调整或指令缓存刷新失败，
+ * 返回 LZMA_C_API_CODE_SETUP_FAILED。
  *
  * 安全与平台限制：虽然接口接收 src_size，当前解码核心不会在读取压缩数据
  * 时检查输入边界，也不能可靠防护损坏码流造成的越界读写。因此只能用于可信、
  * 完整且属性/长度正确的码流，不能用于不可信或可能损坏的输入。当前实现依赖
- * 32 位 Windows，并在运行时分配可执行内存。
+ * 32 位 Windows。
  */
 LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
                                  uint8_t *dst, size_t dst_capacity,
