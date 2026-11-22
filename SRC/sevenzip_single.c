@@ -79,11 +79,25 @@ static int reader_take(Reader *r, size_t n, const uint8_t **out)
     return 1;
 }
 
+/*
+ * 读取失败只由调试构建处理；发布构建假设结构有效，只推进游标，不生成
+ * 失败分支。reader_size 同理：发布版本不做长度转换/读取失败检查。
+ */
+#ifdef LZMA_C_API_DEBUG
+#define READER_TAKE_OR_RETURN(r, n, out, result) \
+    do { if (!reader_take((r), (n), (out))) return (result); } while (0)
+#define READER_SIZE_OK(r, value) reader_size((r), (value))
+#else
+#define READER_TAKE_OR_RETURN(r, n, out, result) \
+    ((void)reader_take((r), (n), (out)))
+#define READER_SIZE_OK(r, value) (reader_size((r), (value)), 1)
+#endif
+
 /* 读取一个字节；调试版越界时返回 0，并通过 failed 区分真实的 0 字节。 */
 static uint8_t reader_byte(Reader *r)
 {
     const uint8_t *p;
-    if (!reader_take(r, 1, &p)) return 0;
+    READER_TAKE_OR_RETURN(r, 1, &p, 0);
     return p[0];
 }
 
@@ -110,7 +124,7 @@ static uint64_t reader_number(Reader *r)
 static int reader_u32(Reader *r, uint32_t *value)
 {
     const uint8_t *p;
-    if (!reader_take(r, 4, &p)) return 0;
+    READER_TAKE_OR_RETURN(r, 4, &p, 0);
     *value = read_u32le(p);
     return 1;
 }
@@ -170,9 +184,9 @@ static int parse_streams(Reader *r, Folder *f)
     uint8_t tag, coder_flags;
     const uint8_t *p;
 
-    if (reader_byte(r) != 6 || !reader_size(r, &pack_pos) ||
+    if (reader_byte(r) != 6 || !READER_SIZE_OK(r, &pack_pos) ||
         reader_byte(r) != 1 || reader_byte(r) != 9 ||
-        !reader_size(r, &f->packed_size)) return 0;
+        !READER_SIZE_OK(r, &f->packed_size)) return 0;
 
     tag = reader_byte(r);
     if (tag == 10) {
@@ -180,7 +194,7 @@ static int parse_streams(Reader *r, Folder *f)
         tag = reader_byte(r);
     }
     if (tag != 0 || reader_byte(r) != 7 || reader_byte(r) != 11 ||
-        !reader_size(r, &folder_count) || folder_count != 1 || reader_byte(r) != 0 ||
+        !READER_SIZE_OK(r, &folder_count) || folder_count != 1 || reader_byte(r) != 0 ||
         reader_byte(r) != 1) return 0;
 
     coder_flags = reader_byte(r);
@@ -190,12 +204,13 @@ static int parse_streams(Reader *r, Folder *f)
 #endif
         (coder_flags & 0xD0) || (coder_flags & 0x0F) != 3 ||
         !(coder_flags & 0x20)) return 0;
-    if (!reader_take(r, 3, &p) || p[0] != 3 || p[1] != 1 || p[2] != 1 ||
-        !reader_size(r, &props_size) || props_size != sizeof(f->properties) ||
-        !reader_take(r, props_size, &p)) return 0;
+    READER_TAKE_OR_RETURN(r, 3, &p, 0);
+    if (p[0] != 3 || p[1] != 1 || p[2] != 1 ||
+        !READER_SIZE_OK(r, &props_size) || props_size != sizeof(f->properties)) return 0;
+    READER_TAKE_OR_RETURN(r, props_size, &p, 0);
     memcpy(f->properties, p, sizeof(f->properties));
 
-    if (reader_byte(r) != 12 || !reader_size(r, &unpack_size)) return 0;
+    if (reader_byte(r) != 12 || !READER_SIZE_OK(r, &unpack_size)) return 0;
     f->unpacked_size = unpack_size;
     tag = reader_byte(r);
     if (tag == 10) {
@@ -208,7 +223,7 @@ static int parse_streams(Reader *r, Folder *f)
     if (tag == 8) {
         tag = reader_byte(r);
         if (tag == 13) {
-            if (!reader_size(r, &substream_count) || substream_count != 1) return 0;
+            if (!READER_SIZE_OK(r, &substream_count) || substream_count != 1) return 0;
             tag = reader_byte(r);
         }
         if (tag == 9) {
@@ -236,7 +251,11 @@ static int parse_streams(Reader *r, Folder *f)
     if (pack_pos > SIZE_MAX - SEVENZIP_START_SIZE) return 0;
 #endif
     f->packed_offset = SEVENZIP_START_SIZE + pack_pos;
+#ifdef LZMA_C_API_DEBUG
     return !r->failed;
+#else
+    return 1;
+#endif
 }
 
 /* 将 LZMA1 属性字节拆成核心需要的 lc、lp、pb；仅调试版拒绝非法组合。 */
@@ -325,8 +344,8 @@ static SevenZipResult parse_header(const uint8_t *data, size_t size,
     if (tag == 2) {
         while ((tag = reader_byte(&r)) != 0) {
             size_t n;
-            if (!reader_size(&r, &n) || !reader_take(&r, n, NULL))
-                return SEVENZIP_INVALID_ARCHIVE;
+            if (!READER_SIZE_OK(&r, &n)) return SEVENZIP_INVALID_ARCHIVE;
+            READER_TAKE_OR_RETURN(&r, n, NULL, SEVENZIP_INVALID_ARCHIVE);
         }
         tag = reader_byte(&r);
     }
@@ -338,13 +357,13 @@ static SevenZipResult parse_header(const uint8_t *data, size_t size,
     if (tag != 5) return SEVENZIP_UNSUPPORTED;
     {
         size_t file_count, prop_size;
-        if (!reader_size(&r, &file_count) || file_count != 1)
+        if (!READER_SIZE_OK(&r, &file_count) || file_count != 1)
             return SEVENZIP_UNSUPPORTED;
         while ((tag = reader_byte(&r)) != 0) {
             const uint8_t *p;
             size_t n;
-            if (!reader_size(&r, &n) || !reader_take(&r, n, &p))
-                return SEVENZIP_INVALID_ARCHIVE;
+            if (!READER_SIZE_OK(&r, &n)) return SEVENZIP_INVALID_ARCHIVE;
+            READER_TAKE_OR_RETURN(&r, n, &p, SEVENZIP_INVALID_ARCHIVE);
             prop_size = n;
             if (tag == 14) {
                 if (prop_size != 1) return SEVENZIP_INVALID_ARCHIVE;

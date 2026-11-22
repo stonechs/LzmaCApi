@@ -4,6 +4,10 @@ Updated: 2026-11-22
 
 ## Current state
 
+- V0.5.5 显式隔离 Reader 失败分支：`reader_byte`、`reader_u32`、StreamsInfo
+  和 Header 属性读取统一使用调试/发布两套宏。发布版不生成 `reader_take`
+  越界失败分支，也不生成 `reader_size` 转换失败判断；格式标记、字段值和
+  单文件/单流/LZMA1 支持范围检查仍保留。
 - V0.5.4 收窄 7z 解析：只接受普通 Header、单非空文件、单 packed stream、
   单 LZMA1 coder。压缩 Header 分支已移除。Reader 读取越界、长度转换、归档
   偏移/长度、输出容量、签名和 CRC 检查均由 `LZMA_C_API_DEBUG` 隔离；发布版
@@ -16,12 +20,18 @@ Updated: 2026-11-22
   `work/stress_sevenzip_50_20261122_111055_800/results.csv`。
 - 2026-11-22：Clang 23.1.5 / i686、NASM 3.01 构建通过；原有 API、release
   smoke、单文件 7z 正常与错误输入测试均通过。
+- V0.5.5 回归：API 3 组与 release smoke、单文件 7z 正常/错误用例通过；
+  `forTest/` 12/12、压力归档 50/50 均在 release/debug 与 7-Zip 逐字节匹配。
+  新结果位于 `work/forTest_decode_20261122_114944_707/results.csv` 和
+  `work/stress_sevenzip_50_20261122_114944_595/results.csv`。
+- V0.5.5 提交和标签待生成；实现基线为 V0.5.4：
+  `f1591ae69b1a494bae9b0b93a6cfe8346c6e3a8b`。
 - V0.5.4 提交：`f1591ae69b1a494bae9b0b93a6cfe8346c6e3a8b`，标签 `V0.5.4`；
   V0.5.3 基线为 `9608a829bb3e78abb93ceab50ed8593317009cba`。
 - 后续：需要覆盖 LZMA2 时，须先为现有解码核心增加 LZMA2 chunk/state 支持；
   当前没有其他待做项。
 
-- V0.5.4 builds the C API, decoder, and optional 7z container layer as one static library:
+- V0.5.5 builds the C API, decoder, and optional 7z container layer as one static library:
   `build/lzmacapi_x86.lib` and `build/lzmacapi_x86_debug.lib`.
 - The public C API signature is unchanged. C passes `src`, `dst`, `workspace`,
   `dst_end`, `workspace_size`, and `lc/lp/pb` to the decoder as cdecl stack args.
@@ -68,24 +78,25 @@ Updated: 2026-11-22
   harness confirmed corrupted signature/CRC fields are ignored by release and
   rejected by debug.
 - `dumpbin` measured `lzma_c_api_decode` `.text` at 47 bytes release and 235 bytes
-  debug. The assembly `.lzma` section is 534/550 bytes; static libraries with the
-  container layer are 8,672/9,256 bytes. These are object/section and archive sizes, not final EXE
+  debug. The assembly `.lzma` section is 534/550 bytes; the current static
+  libraries with the container layer are 6,440/8,900 bytes. These are object/section and archive sizes, not final EXE
   size deltas.
-- Clang 23.1.5 `-Oz -ffunction-sections`, i686 MSVC COFF, function COMDAT raw sizes:
+- Clang 23.1.5 `-Oz -ffunction-sections`, i686 MSVC COFF, function COMDAT raw sizes
+  after the V0.5.5 Reader check isolation:
 
   | Function | Release bytes | Debug bytes |
   | --- | ---: | ---: |
-  | `sevenzip_extract_single_lzma1` (含已内联解析函数) | 1,310 | 1,901 |
+  | `sevenzip_extract_single_lzma1` (含已内联解析函数) | 1,292 | 1,901 |
   | `reader_size` | 160 | 166 |
   | `read_digest_vector` | 92 | 99 |
   | `reader_byte` | 内联 | 28 |
   | `reader_take` | 内联 | 68 |
   | `reader_u32` | 内联 | 39 |
   | `crc32_bytes` | — | 57 |
-  | **7z container C total** | **1,562** | **2,358** |
+  | **7z container C total** | **1,544** | **2,358** |
   | `lzma_c_api_decode` wrapper | 47 | 216 |
   | NASM LZMA core (`.lzma`) | 534 | 550 |
-  | **Combined code sections** | **2,143** | **3,124** |
+  | **Combined code sections** | **2,125** | **3,124** |
 
   `parse_streams`, `parse_header`, `decode_folder`, `read_u32le`, `read_u64le`,
   `reader_number`, and `decode_properties` are inlined into the entry under `-Oz`.
