@@ -484,7 +484,6 @@ SevenZipResult sevenzip_extract_single_lzma1_fast(
 {
     size_t next_offset, next_size;
     uint8_t tag, all_digests;
-    const uint8_t *properties;
     Reader r;
     Folder folder;
 
@@ -495,15 +494,13 @@ SevenZipResult sevenzip_extract_single_lzma1_fast(
     r.size = next_size;
     r.pos = 0;
     r.failed = 0;
-    memset(&folder, 0, sizeof(folder));
+    folder.packed_crc_defined = 0;
+    folder.stream_crc_defined = 0;
 
     /* Header、MainStreamsInfo、PackInfo、PackPos、单个 packed stream、Size。 */
-    reader_byte(&r);
-    reader_byte(&r);
-    reader_byte(&r);
+    r.pos += 3;
     folder.packed_offset = SEVENZIP_START_SIZE + (size_t)reader_number(&r);
-    reader_byte(&r);
-    reader_byte(&r);
+    r.pos += 2;
     folder.packed_size = (size_t)reader_number(&r);
 
     /* Pack CRC 若存在只消费其字段，不计算或比较 CRC。 */
@@ -515,24 +512,18 @@ SevenZipResult sevenzip_extract_single_lzma1_fast(
         } else if (reader_byte(&r) & 0x80) {
             r.pos += 4;
         }
-        reader_byte(&r);
+        r.pos += 1;
     }
 
-    /* UnpackInfo、单 folder、单 coder、LZMA1 方法 ID 和 5 字节属性。 */
-    reader_byte(&r);
-    reader_byte(&r);
-    reader_byte(&r);
-    reader_byte(&r);
-    reader_byte(&r);
-    reader_byte(&r);
-    r.pos += 3;
-    reader_byte(&r);
-    properties = r.data + r.pos;
-    memcpy(folder.properties, properties, sizeof(folder.properties));
+    /* 固定布局中的 UnpackInfo、folder、coder 数量及 coder flags 共 6 字节。 */
+    r.pos += 6;
+    r.pos += 3; /* LZMA1 方法 ID */
+    r.pos += 1; /* 属性长度字段：固定为 5 */
+    folder.properties[0] = r.data[r.pos]; /* 仅首字节含 lc/lp/pb */
     r.pos += sizeof(folder.properties);
 
     /* UnpackSize 给出解码停止位置；其余 Header 字段解码不需要。 */
-    reader_byte(&r);
+    r.pos += 1; /* UnpackSize tag */
     folder.unpacked_size = (size_t)reader_number(&r);
 
     return decode_folder(archive, archive_size, next_offset, &folder, output,
