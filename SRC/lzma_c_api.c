@@ -3,11 +3,11 @@
 /* Implemented by the statically linked NASM decoder. */
 #ifdef LZMA_C_API_DEBUG
 extern uint8_t *__cdecl lzma_static_x86_run(
-    const uint8_t *src, uint8_t *dst, void *workspace, uint8_t *dst_end,
+    const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
     size_t workspace_size, unsigned lc, unsigned lp, unsigned pb);
 #else
 extern void __cdecl lzma_static_x86_run(
-    const uint8_t *src, uint8_t *dst, void *workspace, uint8_t *dst_end,
+    const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
     size_t workspace_size, unsigned lc, unsigned lp, unsigned pb);
 #endif
 
@@ -40,18 +40,14 @@ LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
     /* 汇编直接读取参数；src 偏移和 workspace 概率表初始化由解码器处理。 */
 #ifdef LZMA_C_API_DEBUG
     end = lzma_static_x86_run(
-        src, dst, workspace,
-        (uint8_t *)((uintptr_t)dst + (uintptr_t)output_size),
-        workspace_size, lc, lp, pb);
+        src, dst, workspace, output_size, workspace_size, lc, lp, pb);
 
     if (end < dst || (size_t)(end - dst) != output_size)
         return LZMA_C_API_INVALID_STREAM;
     *dst_size = (size_t)(end - dst);
 #else
     lzma_static_x86_run(
-        src, dst, workspace,
-        (uint8_t *)((uintptr_t)dst + (uintptr_t)output_size),
-        workspace_size, lc, lp, pb);
+        src, dst, workspace, output_size, workspace_size, lc, lp, pb);
 #endif
     return LZMA_C_API_OK;
 }

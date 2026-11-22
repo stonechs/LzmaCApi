@@ -87,7 +87,7 @@ SevenZipResult rc = sevenzip_extract_single_lzma1_fast(
 
 尽管 API 接收 `src_size`，解码核心读取压缩数据时不会检查输入边界；损坏或截断的输入可能导致越界读写。它也不能安全处理不可信输入。请只对可信、完整且属性和解压长度正确的码流调用。实现仅支持 32 位 Windows。
 
-解码入口通过普通 x86 cdecl 调用直接接收 `src`、`dst`、`workspace`、`dst_end`、`workspace_size` 和 `lc/lp/pb`；汇编将输入指针推进 5 字节，并按 `workspace_size/2` 初始化概率项。`pb/lp` 掩码在入口计算并保存在栈上，`lc` 在字面量解码时作为变量移位量使用。
+解码入口通过普通 x86 cdecl 调用直接接收 `src`、`dst`、`workspace`、`output_size`、`workspace_size` 和 `lc/lp/pb`；汇编入口将 `dst + output_size` 算成输出停止地址，并将输入指针推进 5 字节，按 `workspace_size/2` 初始化概率项。`pb/lp` 掩码在入口计算并保存在栈上，`lc` 在字面量解码时作为变量移位量使用。
 
 汇编代码不会在运行时被修改，C 层不需要修改代码页权限或刷新指令缓存。多个调用可以并发执行，但每次调用必须使用各自不重叠的输入、输出和 workspace 缓冲区。
 

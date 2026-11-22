@@ -29,12 +29,12 @@ section .lzma code align=16
 global _lzma_static_x86_run
 
 ; -----------------------------------------------------------------------------
-; 解码入口：cdecl run(src, dst, workspace, dst_end, workspace_size, lc, lp, pb)
+; 解码入口：cdecl run(src, dst, workspace, output_size, workspace_size, lc, lp, pb)
 ; 保存三个非易失寄存器并建立 EBP 帧后，参数槽为：
 ;   [EBP+20] src         原始 range stream 地址；入口将其推进 5 字节
 ;   [EBP+24] dst         当前输出指针（解码过程中递增）
 ;   [EBP+28] workspace   概率表工作区
-;   [EBP+32] dst_end     输出停止地址
+;   [EBP+32] output_size 输入输出槽：先是目标长度，入口加 dst 后覆盖为停止地址
 ;   [EBP+36] workspace_size 工作区容量（字节）；每两个字节初始化一个概率项
 ;   [EBP+40] lc          字面量上下文属性
 ;   [EBP+44] lp          字面量位置属性
@@ -81,7 +81,7 @@ LOC _state
 %define _rc_bit edi
 ; C 传入的指针参数槽直接作为工作变量。Temp 指向 workspace；Dest 是会随输出
 ; 递增的当前写入指针；Src 是会随 range normalization 前进的输入指针；
-; DestEnd 是输出停止地址。后面直接读写参数槽来更新 Src 和 Dest。
+; DestEnd 槽由入口将 output_size 加到 dst 上得到。后面直接读写参数槽更新 Src、Dest。
 %define Src dword [ebp+20]
 %define Dest dword [ebp+24]
 %define Temp dword [ebp+28]
@@ -93,6 +93,9 @@ LOC _state
 ; 每个 uint16_t 概率项初始化为 1024（0x400），即自适应概率的中间值。
 
 _start:	enter	0, 0
+	; 将 C 传入的 output_size 转成目标末地址，并覆盖原参数槽，供解码循环比较。
+	mov	eax, [ebp+24]
+	add	[ebp+32], eax
 	; 位置状态掩码 pb_mask=(1<<pb)-1，后续每轮循环直接从局部变量读取。
 	mov	ecx, [ebp+48]
 	mov	eax, 1
