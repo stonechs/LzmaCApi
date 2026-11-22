@@ -24,8 +24,8 @@ Updated: 2026-11-22
   `forTest/` 12/12、压力归档 50/50 均在 release/debug 与 7-Zip 逐字节匹配。
   新结果位于 `work/forTest_decode_20261122_114944_707/results.csv` 和
   `work/stress_sevenzip_50_20261122_114944_595/results.csv`。
-- V0.5.5 提交和标签待生成；实现基线为 V0.5.4：
-  `f1591ae69b1a494bae9b0b93a6cfe8346c6e3a8b`。
+- V0.5.5 实现提交：`90438c6407203dd6bbcf657231abe3125c9819f0`，标签 `V0.5.5`；
+  V0.5.4 基线为 `f1591ae69b1a494bae9b0b93a6cfe8346c6e3a8b`。
 - V0.5.4 提交：`f1591ae69b1a494bae9b0b93a6cfe8346c6e3a8b`，标签 `V0.5.4`；
   V0.5.3 基线为 `9608a829bb3e78abb93ceab50ed8593317009cba`。
 - 后续：需要覆盖 LZMA2 时，须先为现有解码核心增加 LZMA2 chunk/state 支持；
