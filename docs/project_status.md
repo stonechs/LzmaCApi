@@ -4,7 +4,17 @@ Updated: 2026-11-22
 
 ## Current state
 
-- V0.5.1 builds the C API and decoder as one static library:
+- V0.5.2 加入单文件 7z 容器适配：`SRC/sevenzip_single.c/.h` 解析头部并
+  调用现有 LZMA1 API；支持压缩头部，校验签名头、下一头部、packed stream
+  和可用的解压数据 CRC。限制为一个非空文件和一个 LZMA1 coder，不支持
+  LZMA2、滤镜、加密、多文件或分卷；当前输出上限为 16 MiB。
+- `script/test_sevenzip.ps1` 用 7-Zip 生成真实归档，验证 release/debug 解压、
+  输出容量、签名和起始头 CRC。
+- 2026-11-22：Clang 23.1.5 / i686、NASM 3.01 构建通过；原有 API 与 release
+  smoke 测试通过。7-Zip 26.04 生成的默认和 `lc=2/lp=2/pb=4` 单文件 LZMA1
+  归档均在 release/debug 逐字节匹配通过。
+
+- V0.5.2 builds the C API, decoder, and optional 7z container layer as one static library:
   `build/lzmacapi_x86.lib` and `build/lzmacapi_x86_debug.lib`.
 - The public C API signature is unchanged. C passes `src`, `dst`, `workspace`,
   `dst_end`, `workspace_size`, and `lc/lp/pb` to the decoder as cdecl stack args.
@@ -58,6 +68,11 @@ Updated: 2026-11-22
 
 - x86 Windows only. Input must be trusted and complete; compressed source bounds
   are not checked by the decoder core.
+- The 7z layer accepts a single non-empty LZMA1 file (and a single LZMA1 coder for
+  an encoded header), with a 16 MiB unpacked-size cap. It rejects LZMA2, encryption,
+  filters, multiple files/streams, and split archives. Header/data CRCs are checked
+  when present, but CRC checks do not make the unchecked decoder safe for hostile
+  input.
 - Concurrent calls are supported when each call uses non-overlapping input,
   output, and workspace buffers.
 - `dist/V0.3/` remains the preserved V0.3 snapshot and was not modified.

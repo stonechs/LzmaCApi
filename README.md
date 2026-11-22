@@ -1,6 +1,6 @@
 # LzmaCApi
 
-一个面向 32 位 Windows 的 C API 封装，调用 Ilya Kurdyukov 的 x86 静态 micro-LZMA 解码核心（CC BY 3.0）。C API 和解码汇编静态链接；调用时由汇编准备入口把本次参数修补进解码指令，再执行解码主体。
+一个面向 32 位 Windows 的 LZMA1 C 解码 API，并提供单文件 7z 容器解析层。解码汇编基于 Ilya Kurdyukov 的 x86 静态 micro-LZMA 核心（CC BY 3.0）。
 
 ## 目录结构
 
@@ -20,6 +20,32 @@
 ```
 
 构建脚本使用 NASM、Clang/Clang-cl、LLD、Python 3 和 Windows SDK/MSVC 兼容运行库，并生成精简库 `build/lzmacapi_x86.lib` 和带参数校验的 `build/lzmacapi_x86_debug.lib`。脚本会从 `PATH` 或 `%LOCALAPPDATA%\Programs\LLVM` 查找 LLVM 工具。NASM 将汇编源码编译成 COFF 对象，构建不再生成机器码头文件。
+
+## 单文件 7z 容器 API
+
+`SRC/sevenzip_single.h` 提供 `sevenzip_extract_single_lzma1`。调用方将完整 7z 文件读入内存并提供输出缓冲区；函数解析 7z 头部、检查签名头和可用 CRC，再调用本项目的 `lzma_c_api_decode` 解压文件数据。压缩头部也可由该 API 解码。内部按 LZMA 属性分配 workspace。7z 的签名头包含校验值、下一头部偏移/大小和下一头部 CRC；容器层按 7z 结构读取这些字段。[7z 格式定义](https://github.com/ip7z/7zip/blob/main/DOC/7zFormat.txt)
+
+最小调用示例：
+
+```c
+size_t output_size = 0;
+SevenZipResult rc = sevenzip_extract_single_lzma1(
+    archive_bytes, archive_size,
+    output_buffer, output_capacity, &output_size);
+```
+
+成功时 `output_size` 是实际输出长度；失败时参见 `SevenZipResult`。输出容量不足返回 `SEVENZIP_OUTPUT_TOO_SMALL`。
+
+当前仅支持一个非空文件、一个 packed stream 和一个 LZMA1 coder；不支持 LZMA2、加密、滤镜、多文件、多流或分卷。解压输出和压缩头最大为 16 MiB。C 容器层不调用 `archive.js` 的 JavaScript 解码模块。
+
+7z 本身可以使用多种编码器和滤镜；该 API 是项目现有 LZMA1 汇编核心上的窄容器适配层，不是通用 7z 解包器。容器层检查数据偏移、长度与可用 CRC，但解码核心不校验每次读取是否仍在压缩数据范围内，也不属于恶意输入防护边界；只应处理可信且完整的归档。
+
+生成真实 LZMA1 归档并测试容器层（需要安装 7-Zip）：
+
+```powershell
+.\script\build.ps1
+.\script\test_sevenzip.ps1
+```
 
 ## API 测试
 
@@ -45,6 +71,6 @@
 
 ## 当前验证
 
-2026-11-22 使用 Clang 23.1.5（i686 Windows 目标，`/O1`）、NASM 3.01 和本机 Windows SDK/MSVC 兼容运行库构建。基础 API 测试和发布版 smoke test 通过。另用 7-Zip 26.04 生成 235 组 LZMA1 压力用例，覆盖 API 接受的全部 `lc/lp/pb` 组合及最长 1 MiB 的长码流；发布版与调试版都逐字节比对通过。压力测试夹具和运行器位于 `work/stress_v0_5_runtime_attrs/`。测试程序编译有 `fopen` 弃用提示，不影响构建和运行。
+2026-11-22 使用 Clang 23.1.5（i686 Windows 目标，`/O1`）、NASM 3.01 和本机 Windows SDK/MSVC 兼容运行库构建。基础 API 测试和发布版 smoke test 通过。另用 7-Zip 26.04 生成 235 组 LZMA1 压力用例，覆盖 API 接受的全部 `lc/lp/pb` 组合及最长 1 MiB 的长码流；发布版与调试版都逐字节比对通过。单文件 7z 容器测试在两种库上通过，覆盖普通头部、不同 LZMA 属性、签名/头 CRC 和输出容量错误。压力测试夹具和运行器位于 `work/stress_v0_5_runtime_attrs/`。测试程序编译有 `fopen` 弃用提示，不影响构建和运行。
 
 调试版会填写 `dst_size` 并校验实际输出长度；发布版不读写 `dst_size`，可传 `NULL`，由汇编直接解码。当前版本的 `lzma_c_api_decode` `.text` 为发布版 47 字节、调试版 235 字节；汇编段为 534/550 字节；静态库为 3,130/3,346 字节。这些大小不等同于最终 EXE 的净增量。

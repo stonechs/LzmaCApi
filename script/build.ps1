@@ -29,6 +29,8 @@ $asmObj = Join-Path $build 'lzma_static_x86.obj'
 $debugAsmObj = Join-Path $build 'lzma_static_x86_debug.obj'
 $cObj = Join-Path $build 'lzma_c_api.obj'
 $debugCObj = Join-Path $build 'lzma_c_api_debug.obj'
+$sevenZipCObj = Join-Path $build 'sevenzip_single.obj'
+$debugSevenZipCObj = Join-Path $build 'sevenzip_single_debug.obj'
 $lib = Join-Path $build 'lzmacapi_x86.lib'
 $debugLib = Join-Path $build 'lzmacapi_x86_debug.lib'
 
@@ -39,12 +41,16 @@ if ($LASTEXITCODE -ne 0) { throw 'NASM debug assembly failed' }
 
 & $clang --target=i686-pc-windows-msvc /nologo /O1 /c /TC (Join-Path $src 'lzma_c_api.c') "/Fo$cObj"
 if ($LASTEXITCODE -ne 0) { throw 'Clang C compilation failed; use a Windows SDK and MSVC-compatible runtime installation.' }
-& $linker /lib "/OUT:$lib" $cObj $asmObj
+& $clang --target=i686-pc-windows-msvc /nologo /O1 /c /TC (Join-Path $src 'sevenzip_single.c') "/Fo$sevenZipCObj"
+if ($LASTEXITCODE -ne 0) { throw 'Clang 7z container compilation failed' }
+& $linker /lib "/OUT:$lib" $cObj $sevenZipCObj $asmObj
 if ($LASTEXITCODE -ne 0) { throw 'Release static library creation failed' }
 
 & $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /c /TC (Join-Path $src 'lzma_c_api.c') "/Fo$debugCObj"
 if ($LASTEXITCODE -ne 0) { throw 'Clang debug C compilation failed' }
-& $linker /lib "/OUT:$debugLib" $debugCObj $debugAsmObj
+& $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /c /TC (Join-Path $src 'sevenzip_single.c') "/Fo$debugSevenZipCObj"
+if ($LASTEXITCODE -ne 0) { throw 'Clang debug 7z container compilation failed' }
+& $linker /lib "/OUT:$debugLib" $debugCObj $debugSevenZipCObj $debugAsmObj
 if ($LASTEXITCODE -ne 0) { throw 'Debug static library creation failed' }
 
 python (Join-Path $PSScriptRoot 'make_fixture.py') $build
@@ -63,6 +69,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Clang release smoke build failed' }
 & (Join-Path $build 'smoke_release.exe') (Join-Path $build 'default.raw') (Join-Path $build 'default.expected')
 if ($LASTEXITCODE -ne 0) { throw 'Release library smoke test failed' }
 
-Get-Item $asmObj, $debugAsmObj, $cObj, $lib, $debugCObj, $debugLib,
+Get-Item $asmObj, $debugAsmObj, $cObj, $sevenZipCObj, $lib, $debugCObj, $debugSevenZipCObj, $debugLib,
     (Join-Path $build 'api_test.exe'), (Join-Path $build 'smoke_release.exe') |
     Select-Object Name, Length
