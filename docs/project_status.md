@@ -13,6 +13,9 @@ Updated: 2026-11-22
 - 2026-11-22：Clang 23.1.5 / i686、NASM 3.01 构建通过；原有 API 与 release
   smoke 测试通过。7-Zip 26.04 生成的默认和 `lc=2/lp=2/pb=4` 单文件 LZMA1
   归档均在 release/debug 逐字节匹配通过。
+- 实现提交：`5c88d5fc3fd1ca1c9ac6988a45f574e52e678de2`，标签 `V0.5.2`。
+- 后续：需要覆盖 LZMA2 时，须先为现有解码核心增加 LZMA2 chunk/state 支持；
+  当前没有其他待做项。
 
 - V0.5.2 builds the C API, decoder, and optional 7z container layer as one static library:
   `build/lzmacapi_x86.lib` and `build/lzmacapi_x86_debug.lib`.
