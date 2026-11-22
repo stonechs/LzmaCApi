@@ -1,0 +1,52 @@
+$ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent $PSScriptRoot
+$build = Join-Path $root 'build'
+$src = Join-Path $root 'SRC'
+$asm = Join-Path $src 'lzma_static_x86.asm'
+New-Item -ItemType Directory -Force -Path $build | Out-Null
+nasm -f bin -O9 $asm -o (Join-Path $build 'static_x86.bin')
+$bytes = [IO.File]::ReadAllBytes((Join-Path $build 'static_x86.bin'))
+$lines = [Collections.Generic.List[string]]::new()
+$lines.Add('#ifndef LZMA_STATIC_X86_BLOB_H')
+$lines.Add('#define LZMA_STATIC_X86_BLOB_H')
+$lines.Add('static const unsigned char lzma_static_x86_blob[] = {')
+for ($i = 0; $i -lt $bytes.Length; $i += 16) {
+    $last = [Math]::Min($i + 15, $bytes.Length - 1)
+    $chunk = $bytes[$i..$last] | ForEach-Object { '0x{0:x2}' -f $_ }
+    $lines.Add('    ' + ($chunk -join ', ') + ',')
+}
+$lines.Add('};')
+$lines.Add('#endif')
+[IO.File]::WriteAllLines((Join-Path $src 'static_x86_blob.h'), $lines)
+$clangCommand = Get-Command clang-cl -ErrorAction SilentlyContinue
+$linkerCommand = Get-Command lld-link -ErrorAction SilentlyContinue
+if (-not $clangCommand) {
+    $candidate = Join-Path $env:LOCALAPPDATA 'Programs\LLVM\bin\clang-cl.exe'
+    if (Test-Path $candidate) { $clang = $candidate }
+} else {
+    $clang = $clangCommand.Source
+}
+if (-not $linkerCommand) {
+    $candidate = Join-Path $env:LOCALAPPDATA 'Programs\LLVM\bin\lld-link.exe'
+    if (Test-Path $candidate) { $linker = $candidate }
+} else {
+    $linker = $linkerCommand.Source
+}
+if (-not $clang -or -not $linker) {
+    throw 'clang-cl and lld-link are required; add LLVM\bin to PATH or install LLVM under LOCALAPPDATA\Programs\LLVM.'
+}
+& $clang --target=i686-pc-windows-msvc /nologo /O1 /c /TC (Join-Path $src 'lzma_c_api.c') "/Fo$(Join-Path $build 'lzma_c_api.obj')"
+if ($LASTEXITCODE -ne 0) { throw 'Clang C compilation failed; use a Windows SDK and MSVC-compatible runtime installation.' }
+& $linker /lib "/OUT:$(Join-Path $build 'lzmacapi_x86.lib')" (Join-Path $build 'lzma_c_api.obj')
+if ($LASTEXITCODE -ne 0) { throw 'Static library creation failed' }
+python (Join-Path $PSScriptRoot 'make_fixture.py') $build
+if ($LASTEXITCODE -ne 0) { throw 'Fixture generation failed' }
+& $clang --target=i686-pc-windows-msvc /nologo /O1 /TC (Join-Path $src 'api_test.c') (Join-Path $build 'lzmacapi_x86.lib') "/Fe:$(Join-Path $build 'api_test.exe')" /link /subsystem:console
+if ($LASTEXITCODE -ne 0) { throw 'Clang API test build failed' }
+& (Join-Path $build 'api_test.exe') (Join-Path $build 'minprops.raw') (Join-Path $build 'minprops.expected') 0 0 0
+if ($LASTEXITCODE -ne 0) { throw 'Minimum properties API tests failed' }
+& (Join-Path $build 'api_test.exe') (Join-Path $build 'default.raw') (Join-Path $build 'default.expected') 3 0 2
+if ($LASTEXITCODE -ne 0) { throw 'Default properties API tests failed' }
+& (Join-Path $build 'api_test.exe') (Join-Path $build 'wideprops.raw') (Join-Path $build 'wideprops.expected') 2 2 4
+if ($LASTEXITCODE -ne 0) { throw 'Wide properties API tests failed' }
+Get-Item (Join-Path $build 'static_x86.bin'), (Join-Path $build 'lzma_c_api.obj'), (Join-Path $build 'lzmacapi_x86.lib'), (Join-Path $build 'api_test.exe') | Select-Object Name, Length
