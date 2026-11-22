@@ -31,6 +31,8 @@ $cObj = Join-Path $build 'lzma_c_api.obj'
 $debugCObj = Join-Path $build 'lzma_c_api_debug.obj'
 $sevenZipCObj = Join-Path $build 'sevenzip_single.obj'
 $debugSevenZipCObj = Join-Path $build 'sevenzip_single_debug.obj'
+$sevenZipFastCObj = Join-Path $build 'sevenzip_single_fast.obj'
+$debugSevenZipFastCObj = Join-Path $build 'sevenzip_single_fast_debug.obj'
 $lib = Join-Path $build 'lzmacapi_x86.lib'
 $debugLib = Join-Path $build 'lzmacapi_x86_debug.lib'
 
@@ -43,14 +45,18 @@ if ($LASTEXITCODE -ne 0) { throw 'NASM debug assembly failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Clang C compilation failed; use a Windows SDK and MSVC-compatible runtime installation.' }
 & $clang --target=i686-pc-windows-msvc /nologo /O1 /c /TC (Join-Path $src 'sevenzip_single.c') "/Fo$sevenZipCObj"
 if ($LASTEXITCODE -ne 0) { throw 'Clang 7z container compilation failed' }
-& $linker /lib "/OUT:$lib" $cObj $sevenZipCObj $asmObj
+& $clang --target=i686-pc-windows-msvc /nologo /O1 /c /TC (Join-Path $src 'sevenzip_single_fast.c') "/Fo$sevenZipFastCObj"
+if ($LASTEXITCODE -ne 0) { throw 'Clang fast 7z container compilation failed' }
+& $linker /lib "/OUT:$lib" $cObj $sevenZipCObj $sevenZipFastCObj $asmObj
 if ($LASTEXITCODE -ne 0) { throw 'Release static library creation failed' }
 
 & $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /c /TC (Join-Path $src 'lzma_c_api.c') "/Fo$debugCObj"
 if ($LASTEXITCODE -ne 0) { throw 'Clang debug C compilation failed' }
 & $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /c /TC (Join-Path $src 'sevenzip_single.c') "/Fo$debugSevenZipCObj"
 if ($LASTEXITCODE -ne 0) { throw 'Clang debug 7z container compilation failed' }
-& $linker /lib "/OUT:$debugLib" $debugCObj $debugSevenZipCObj $debugAsmObj
+& $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /c /TC (Join-Path $src 'sevenzip_single_fast.c') "/Fo$debugSevenZipFastCObj"
+if ($LASTEXITCODE -ne 0) { throw 'Clang debug fast 7z container compilation failed' }
+& $linker /lib "/OUT:$debugLib" $debugCObj $debugSevenZipCObj $debugSevenZipFastCObj $debugAsmObj
 if ($LASTEXITCODE -ne 0) { throw 'Debug static library creation failed' }
 
 python (Join-Path $PSScriptRoot 'make_fixture.py') $build

@@ -41,6 +41,8 @@ SevenZipResult sevenzip_extract_single_lzma1(
  * 文件、一个 packed stream、一个 LZMA1 coder，coder ID 为 3 字节且属性为 5 字节。
  * 不支持 ArchiveProperties、AdditionalStreamsInfo、压缩 Header、加密、滤镜、
  * 多文件、多流或分卷。调用方必须确保输出容量足够，解码输入完整且属性正确。
+ * fast-only 静态库的 32 位变长整数读取器要求所有长度和偏移小于 100 MiB，
+ * 并要求每个变长整数位置之后至少有 4 个可读字节。
  */
 SevenZipResult sevenzip_extract_single_lzma1_fast(
     const uint8_t *archive, size_t archive_size,

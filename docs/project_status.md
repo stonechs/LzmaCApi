@@ -4,6 +4,22 @@ Updated: 2026-11-22
 
 ## Current state
 
+- 新增 `SRC/sevenzip_single_fast.c`：fast 路径和专用 `decode_folder` 同文件，
+  不依赖完整解析器。`read_number_fast` 已采用一次 32 位读取、按首字节前缀
+  解码的精简实现。`script/build_fast.ps1` 可独立生成
+  `build/lzmacapi_x86_fast.lib` / `build/lzmacapi_x86_fast_debug.lib`；完整构建
+  仍将 fast 入口并入原有库。fast 专用变长整数读取约束：字段值小于 100 MiB，
+  每个字段位置之后至少有 4 个可读字节。静态库编译成功，release/debug 大小为
+  5,016 / 5,378 字节；`dumpbin` 符号表确认 fast-only 库不含普通解析入口。
+  fast-only release 库已链接并成功解码一个现有归档，输出逐字节匹配。
+  完整库 release/debug 组合也编译成功。
+- fast 拆分后回归：`script/build.ps1` 通过（API 三组属性组合、release smoke）；
+  `script/test_forTest_archives.ps1` 的 12 个归档在 release/debug 下全部通过；
+  `script/stress_sevenzip_50.ps1` 的 50 个归档在 release/debug 下全部通过，
+  共 100 次解码并逐字节匹配。总耗时约 10.9 秒。结果见
+  `work/forTest_decode_20261122_174727_680/results.csv` 和
+  `work/stress_sevenzip_50_20261122_174737_864/results.csv`。
+
 - V0.5.7 收紧快速函数的固定字段读取：将不使用的单字节读取改为游标递增，
   只初始化 `decode_folder` 实际读取的 CRC 标志，只复制用于 `lc/lp/pb` 的
   LZMA 属性首字节。Reader 读取现均参与字段值/可选 CRC 解析，没有单纯读出丢弃。

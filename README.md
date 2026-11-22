@@ -19,7 +19,15 @@
 .\script\build.ps1
 ```
 
-构建脚本使用 NASM、Clang/Clang-cl、LLD、Python 3 和 Windows SDK/MSVC 兼容运行库，并生成精简库 `build/lzmacapi_x86.lib` 和带参数校验的 `build/lzmacapi_x86_debug.lib`。脚本会从 `PATH` 或 `%LOCALAPPDATA%\Programs\LLVM` 查找 LLVM 工具。NASM 将汇编源码编译成 COFF 对象，构建不再生成机器码头文件。
+构建脚本使用 NASM、Clang/Clang-cl、LLD、Python 3 和 Windows SDK/MSVC 兼容运行库，并生成完整库 `build/lzmacapi_x86.lib` 和带参数校验的 `build/lzmacapi_x86_debug.lib`。脚本会从 `PATH` 或 `%LOCALAPPDATA%\Programs\LLVM` 查找 LLVM 工具。NASM 将汇编源码编译成 COFF 对象，构建不再生成机器码头文件。
+
+若只需要快速 7z 入口，可单独运行：
+
+```powershell
+.\script\build_fast.ps1
+```
+
+它只编译 `sevenzip_single_fast.c`、LZMA C API 和汇编核心，不链接完整 7z Header 解析器，生成 `build/lzmacapi_x86_fast.lib` 和 `build/lzmacapi_x86_fast_debug.lib`。快速库也包含原始 LZMA C API。专用变长整数读取器要求所有 7z 偏移和长度小于 100 MiB，并且每个变长整数位置之后至少有 4 个可读字节。完整库也包含快速入口以保持既有 API 可用。
 
 ## 单文件 7z 容器 API
 
@@ -50,7 +58,7 @@ SevenZipResult rc = sevenzip_extract_single_lzma1_fast(
     output_buffer, output_capacity, &output_size);
 ```
 
-它假设起始头及偏移都有效，普通 Header 的 `MainStreamsInfo` 紧跟 Header；PackInfo 后是单 folder、单 LZMA1 coder（3 字节 coder ID，5 字节属性）。不支持 ArchiveProperties、AdditionalStreamsInfo、压缩 Header、加密、滤镜、多文件、多流或分卷。可选 Pack CRC 只跳过，不验证；函数也不解析 SubStreamsInfo 和 FilesInfo。因此调用方必须保证完整可信的归档、正确的 LZMA1 字段和足够大的输出缓冲区。结构不符合这些假设时，快速入口可能读错位置或越界。
+它假设起始头及偏移都有效，普通 Header 的 `MainStreamsInfo` 紧跟 Header；PackInfo 后是单 folder、单 LZMA1 coder（3 字节 coder ID，5 字节属性）。不支持 ArchiveProperties、AdditionalStreamsInfo、压缩 Header、加密、滤镜、多文件、多流或分卷。可选 Pack CRC 只跳过，不验证；函数也不解析 SubStreamsInfo 和 FilesInfo。因此调用方必须保证完整可信的归档、正确的 LZMA1 字段和足够大的输出缓冲区。快速专用库还要求所有偏移和长度小于 100 MiB，并保证每个变长整数地址后至少有 4 个可读字节。结构不符合这些假设时，快速入口可能读错位置或越界。
 
 生成真实 LZMA1 归档并测试容器层（需要安装 7-Zip）：
 
