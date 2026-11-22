@@ -4,6 +4,16 @@ Updated: 2026-11-22
 
 ## Current state
 
+- V0.5.6 新增 `sevenzip_extract_single_lzma1_fast`：单个接口函数按固定布局
+  读取 StartHeader、PackInfo 和 UnpackInfo 必需字段，跳过可选 Pack CRC 后直接
+  调用 `decode_folder`，不调用 `parse_header` / `parse_streams`，也不解析
+  SubStreamsInfo、FilesInfo 或验证 CRC。约束详见 `SRC/sevenzip_single.h`。
+- 快速接口已随全套测试验证：`forTest/` 12/12、压力包 50/50 在 release/debug
+  下均与 7-Zip 输出逐字节一致。结果位于
+  `work/forTest_decode_20261122_123624_350/results.csv` 和
+  `work/stress_sevenzip_50_20261122_123630_461/results.csv`。
+- V0.5.6 提交和标签待生成；基线为 V0.5.5：
+  `90438c6407203dd6bbcf657231abe3125c9819f0`。
 - V0.5.5 显式隔离 Reader 失败分支：`reader_byte`、`reader_u32`、StreamsInfo
   和 Header 属性读取统一使用调试/发布两套宏。发布版不生成 `reader_take`
   越界失败分支，也不生成 `reader_size` 转换失败判断；格式标记、字段值和
@@ -31,7 +41,7 @@ Updated: 2026-11-22
 - 后续：需要覆盖 LZMA2 时，须先为现有解码核心增加 LZMA2 chunk/state 支持；
   当前没有其他待做项。
 
-- V0.5.5 builds the C API, decoder, and optional 7z container layer as one static library:
+- V0.5.6 builds the C API, decoder, and optional 7z container layer as one static library:
   `build/lzmacapi_x86.lib` and `build/lzmacapi_x86_debug.lib`.
 - The public C API signature is unchanged. C passes `src`, `dst`, `workspace`,
   `dst_end`, `workspace_size`, and `lc/lp/pb` to the decoder as cdecl stack args.
@@ -79,27 +89,31 @@ Updated: 2026-11-22
   rejected by debug.
 - `dumpbin` measured `lzma_c_api_decode` `.text` at 47 bytes release and 235 bytes
   debug. The assembly `.lzma` section is 534/550 bytes; the current static
-  libraries with the container layer are 6,440/8,900 bytes. These are object/section and archive sizes, not final EXE
+  libraries with the container layer are 7,332/9,564 bytes. These are object/section and archive sizes, not final EXE
   size deltas.
 - Clang 23.1.5 `-Oz -ffunction-sections`, i686 MSVC COFF, function COMDAT raw sizes
-  after the V0.5.5 Reader check isolation:
+  after the V0.5.6 fast entry:
 
   | Function | Release bytes | Debug bytes |
   | --- | ---: | ---: |
-  | `sevenzip_extract_single_lzma1` (含已内联解析函数) | 1,292 | 1,901 |
-  | `reader_size` | 160 | 166 |
+  | `sevenzip_extract_single_lzma1` (含已内联解析函数) | 1,202 | 1,783 |
+  | `sevenzip_extract_single_lzma1_fast` | 195 | 301 |
+  | `decode_folder` | 172 | 347 |
+  | `reader_number` | 152 | 129 |
   | `read_digest_vector` | 92 | 99 |
   | `reader_byte` | 内联 | 28 |
+  | `reader_size` | 内联 | 35 |
   | `reader_take` | 内联 | 68 |
   | `reader_u32` | 内联 | 39 |
   | `crc32_bytes` | — | 57 |
-  | **7z container C total** | **1,544** | **2,358** |
+  | **7z container C total** | **1,813** | **2,886** |
   | `lzma_c_api_decode` wrapper | 47 | 216 |
   | NASM LZMA core (`.lzma`) | 534 | 550 |
-  | **Combined code sections** | **2,125** | **3,124** |
+  | **Combined code sections** | **2,394** | **3,652** |
 
-  `parse_streams`, `parse_header`, `decode_folder`, `read_u32le`, `read_u64le`,
-  `reader_number`, and `decode_properties` are inlined into the entry under `-Oz`.
+  `parse_streams`, `parse_header`, `read_u32le`, `read_u64le`, and
+  `decode_properties` are inlined into the normal entry under `-Oz`; the fast entry
+  calls the separately measured `decode_folder` and `reader_number` sections.
   Assembly is not compiled by Clang, so its section is reported as-is.
   The totals exclude runtime-library functions, constants, alignment, and link-time
   dead-code removal; they are not final executable size deltas.

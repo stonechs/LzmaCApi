@@ -44,6 +44,15 @@ int main(int argc, char **argv)
                 (unsigned long)expected_size);
         return 1;
     }
+    result = sevenzip_extract_single_lzma1_fast(archive, archive_size, output,
+                                                 expected_size, &output_size);
+    if (result != SEVENZIP_OK || output_size != expected_size ||
+        memcmp(output, expected, expected_size) != 0) {
+        fprintf(stderr, "fast extract failed: result=%d size=%lu expected=%lu\n",
+                (int)result, (unsigned long)output_size,
+                (unsigned long)expected_size);
+        return 1;
+    }
 
 #ifdef LZMA_C_API_DEBUG
     /* 调试版检查签名、StartHeaderCRC 和 NextHeaderCRC。 */

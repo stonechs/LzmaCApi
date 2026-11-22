@@ -31,6 +31,21 @@ SevenZipResult sevenzip_extract_single_lzma1(
     const uint8_t *archive, size_t archive_size,
     uint8_t *output, size_t output_capacity, size_t *output_size);
 
+/*
+ * 精简快速入口：参数与 sevenzip_extract_single_lzma1 相同，直接按固定字段
+ * 顺序读取解码所需信息并调用 decode_folder，不验证归档结构或 CRC。
+ * archive/archive_size 是完整 7z 文件的只读地址和字节数；output/
+ * output_capacity 是调用方提供的可写解压缓冲区和容量；output_size 必须指向
+ * 有效的 size_t，成功时接收实际输出长度。此入口不验证指针、归档长度或容量。
+ * 仅适用于完整可信的 7z 文件：普通 Header 后紧跟 MainStreamsInfo；一个非空
+ * 文件、一个 packed stream、一个 LZMA1 coder，coder ID 为 3 字节且属性为 5 字节。
+ * 不支持 ArchiveProperties、AdditionalStreamsInfo、压缩 Header、加密、滤镜、
+ * 多文件、多流或分卷。调用方必须确保输出容量足够，解码输入完整且属性正确。
+ */
+SevenZipResult sevenzip_extract_single_lzma1_fast(
+    const uint8_t *archive, size_t archive_size,
+    uint8_t *output, size_t output_capacity, size_t *output_size);
+
 #ifdef __cplusplus
 }
 #endif

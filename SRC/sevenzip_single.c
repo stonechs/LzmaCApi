@@ -465,3 +465,76 @@ SevenZipResult sevenzip_extract_single_lzma1(
     return decode_folder(archive, archive_size, next_offset, &folder, output,
                          output_capacity, output_size);
 }
+
+/*
+ * 快速路径：只读取解码所需的 StartHeader、PackInfo 和 UnpackInfo 字段，
+ * 不验证归档 tag、coder ID、属性长度或 CRC，也不解析 FilesInfo/SubStreamsInfo；
+ * 解析完成后直接交给 decode_folder。调试构建中 decode_folder 仍执行其已有的
+ * 范围、输出容量和 LZMA 属性检查。假定普通 Header 后立即是 MainStreamsInfo，
+ * 且其中只有一个 LZMA1 stream。
+ *
+ * 参数：archive 指向内存中的完整 7z 字节，archive_size 是其字节数；output
+ * 指向调用方可写的解压缓冲区，output_capacity 是缓冲区容量；output_size 必须
+ * 指向有效的 size_t，成功时接收实际输出长度。快速路径不验证这些指针和长度，
+ * 调用方须保证其有效，并保证输出容量足够。
+ */
+SevenZipResult sevenzip_extract_single_lzma1_fast(
+    const uint8_t *archive, size_t archive_size,
+    uint8_t *output, size_t output_capacity, size_t *output_size)
+{
+    size_t next_offset, next_size;
+    uint8_t tag, all_digests;
+    const uint8_t *properties;
+    Reader r;
+    Folder folder;
+
+    *output_size = 0;
+    next_offset = SEVENZIP_START_SIZE + (size_t)read_u64le(archive + 12);
+    next_size = (size_t)read_u64le(archive + 20);
+    r.data = archive + next_offset;
+    r.size = next_size;
+    r.pos = 0;
+    r.failed = 0;
+    memset(&folder, 0, sizeof(folder));
+
+    /* Header、MainStreamsInfo、PackInfo、PackPos、单个 packed stream、Size。 */
+    reader_byte(&r);
+    reader_byte(&r);
+    reader_byte(&r);
+    folder.packed_offset = SEVENZIP_START_SIZE + (size_t)reader_number(&r);
+    reader_byte(&r);
+    reader_byte(&r);
+    folder.packed_size = (size_t)reader_number(&r);
+
+    /* Pack CRC 若存在只消费其字段，不计算或比较 CRC。 */
+    tag = reader_byte(&r);
+    if (tag == 10) {
+        all_digests = reader_byte(&r);
+        if (all_digests) {
+            r.pos += 4;
+        } else if (reader_byte(&r) & 0x80) {
+            r.pos += 4;
+        }
+        reader_byte(&r);
+    }
+
+    /* UnpackInfo、单 folder、单 coder、LZMA1 方法 ID 和 5 字节属性。 */
+    reader_byte(&r);
+    reader_byte(&r);
+    reader_byte(&r);
+    reader_byte(&r);
+    reader_byte(&r);
+    reader_byte(&r);
+    r.pos += 3;
+    reader_byte(&r);
+    properties = r.data + r.pos;
+    memcpy(folder.properties, properties, sizeof(folder.properties));
+    r.pos += sizeof(folder.properties);
+
+    /* UnpackSize 给出解码停止位置；其余 Header 字段解码不需要。 */
+    reader_byte(&r);
+    folder.unpacked_size = (size_t)reader_number(&r);
+
+    return decode_folder(archive, archive_size, next_offset, &folder, output,
+                         output_capacity, output_size);
+}
