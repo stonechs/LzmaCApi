@@ -4,10 +4,10 @@
 /* Implemented by the statically linked NASM code section. */
 extern uint8_t lzma_static_x86_section_start[];
 extern uint8_t lzma_static_x86_section_end[];
-extern void __cdecl lzma_static_x86_prepare(
-    const uint8_t *src, uint8_t *dst, void *workspace, uint8_t *dst_end,
-    unsigned lc, unsigned lp, unsigned pb);
-extern uint8_t *__cdecl lzma_static_x86_run(void);
+extern void __cdecl lzma_static_x86_prepare(unsigned lc, unsigned lp, unsigned pb);
+extern uint8_t *__cdecl lzma_static_x86_run(
+    const uint8_t *range_src, uint8_t *dst, void *workspace, uint8_t *dst_end,
+    unsigned lc, unsigned lp);
 
 LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
                                  uint8_t *dst, size_t dst_capacity,
@@ -42,7 +42,7 @@ LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
 #endif
 
     /*
-     * 汇编位于独立静态链接段。准备入口将参数写入解码代码的立即数，故
+     * 汇编位于独立静态链接段。准备入口会修补属性对应的指令立即数，故
      * 先临时开放该段的写权限；准备后刷新指令缓存并恢复原有页面权限。
      */
     code_size = (SIZE_T)((uintptr_t)lzma_static_x86_section_end -
@@ -51,9 +51,7 @@ LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
                         PAGE_EXECUTE_READWRITE, &old_protect))
         return LZMA_C_API_CODE_SETUP_FAILED;
 
-    lzma_static_x86_prepare(
-        src, dst, workspace,
-        (uint8_t *)((uintptr_t)dst + (uintptr_t)output_size), lc, lp, pb);
+    lzma_static_x86_prepare(lc, lp, pb);
     flush_ok = FlushInstructionCache(GetCurrentProcess(),
                                      lzma_static_x86_section_start, code_size);
     restore_ok = VirtualProtect(lzma_static_x86_section_start, code_size,
@@ -61,8 +59,10 @@ LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
     if (!flush_ok || !restore_ok)
         return LZMA_C_API_CODE_SETUP_FAILED;
 
-    /* 该原位修补实现一次只允许一个解码调用。 */
-    end = lzma_static_x86_run();
+    /* C 按 cdecl 参数顺序直接传入解码指针和 lc/lp；核心直接访问这些栈参数。 */
+    end = lzma_static_x86_run(
+        src + 5, dst, workspace,
+        (uint8_t *)((uintptr_t)dst + (uintptr_t)output_size), lc, lp);
 
 #ifdef LZMA_C_API_DEBUG
     if (end < dst || (size_t)(end - dst) != output_size)

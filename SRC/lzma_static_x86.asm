@@ -19,9 +19,9 @@
 ; build: nasm -f win32 -O9 lzma_static_x86.asm -o lzma_static_x86.obj
 
 ; 本文件是 32 位 x86 NASM 汇编，输出为 Windows COFF 对象并与 C 静态链接。
-; 解码器放在独立 .lzma 段。每次调用前，C 临时开放该段写权限；准备入口
-; 把参数写入解码指令的立即数，随后 C 刷新指令缓存并恢复原来的段权限。
-; 代码段是共享的，因此当前原位修补方案不支持并发解码。
+; 解码器放在独立 .lzma 段。C 直接调用解码入口并通过 cdecl 参数栈传入
+; 指针和 lc/lp；prepare 只修补 pb/lp/lc 对应的指令立即数。代码段是共享的，
+; 因此当前原位修补方案不支持并发解码。
 
 BITS 32
 section .lzma code align=16
@@ -36,95 +36,53 @@ global _lzma_static_x86_run
 _lzma_static_x86_section_start:
 
 ; -----------------------------------------------------------------------------
-; 准备入口：cdecl prepare(src, dst, workspace, dst_end, lc, lp, pb)
-; 32 位 cdecl 参数从 [EBP+8] 起，每个指针/unsigned 占 4 字节：
-;   [EBP+ 8] src          原始 range stream 地址；src[0] 应为 0
-;   [EBP+12] dst          输出缓冲区起始地址
-;   [EBP+16] workspace    概率表工作区
-;   [EBP+20] dst_end      输出末地址 dst + output_size
-;   [EBP+24] lc           字面量上下文属性
-;   [EBP+28] lp           字面量位置属性
-;   [EBP+32] pb           位置状态属性
-; 这里只在本汇编段内部修补立即数，不生成代码副本，也不向 C 暴露修补表。
+; 准备入口：cdecl prepare(lc, lp, pb)
+; 32 位 cdecl 参数从 [EBP+8] 起，每个 unsigned 占 4 字节：
+;   [EBP+ 8] lc           字面量上下文属性
+;   [EBP+12] lp           字面量位置属性
+;   [EBP+16] pb           位置状态属性
+; 这里只修补属性立即数；输入、输出和工作区指针由 run 的 cdecl 参数直接传入。
 ; EAX/ECX/EDX 是调用者可破坏寄存器；EBP 在返回时恢复。
 _lzma_static_x86_prepare:
 	push	ebp
 	mov	ebp, esp
 
-	; 前 5 字节是 range decoder 初始化段，后续压缩字节从 src+5 开始读取。
-	; 解码入口以 PUSH 立即数保存输入游标，因此将 src+5 写入该立即数。
-	mov	eax, [ebp+8]
-	add	eax, 5
-	mov	dword [_rel_src - 4], eax
-
-	; 解码入口按顺序 PUSH dst_end、src+5、dst、workspace。栈向低地址增长，
-	; 建立核心栈帧后，核心通过 EBP 正偏移读取：+4 workspace、+8 dst、
-	; +12 src、+16 dst_end。dst_end 已由 C 根据 output_size 计算。
-	mov	eax, [ebp+12]
-	mov	dword [_rel_dst - 4], eax
-	mov	eax, [ebp+16]
-	mov	dword [_rel_workspace - 4], eax
-	mov	eax, [ebp+20]
-	mov	dword [_rel_dst_end - 4], eax
-
-	; 读取 src[1..4] 组成初始 Code。x86 从 src+1 未对齐读取 4 字节后，
-	; BSWAP 调整字节序，得到 range decoder 需要的初始编码值。
-	mov	eax, [ebp+8]
-	mov	eax, [eax+1]
-	bswap	eax
-	mov	dword [_rel_code - 4], eax
-
-	; 概率表项数为 2048 + (768 << (lc + lp))，每项是 uint16_t。解码核心
-	; 按此数量初始化 workspace；由汇编计算，C 不再传递该计数。
-	mov	ecx, [ebp+24]
-	add	ecx, [ebp+28]
-	mov	edx, 768
-	shl	edx, cl
-	add	edx, 2048
-	mov	dword [_rel_tsize - 4], edx
-
 	; 属性转成核心使用的常量：pb_mask=(1<<pb)-1、lp_mask=(1<<lp)-1；
 	; lc 原值用于生成字面量概率上下文的移位量。
-	mov	ecx, [ebp+32]
+	mov	ecx, [ebp+16]
 	mov	eax, 1
 	shl	eax, cl
 	dec	eax
 	mov	byte [_rel_pb - 1], al
 
-	mov	ecx, [ebp+28]
+	mov	ecx, [ebp+12]
 	mov	eax, 1
 	shl	eax, cl
 	dec	eax
 	mov	byte [_rel_lp - 1], al
 
-	mov	eax, [ebp+24]
+	mov	eax, [ebp+8]
 	mov	byte [_rel_lc - 1], al
 
 	pop	ebp
 	ret
 
 ; -----------------------------------------------------------------------------
-; 解码入口。由 C 以普通 cdecl 无参调用。准备入口已把本次调用的参数地址写
-; 入下方 PUSH 立即数；这里先保存核心会使用的寄存器，再进入解码栈帧。
+; 解码入口：cdecl run(range_src, dst, workspace, dst_end, lc, lp)
+; 保存三个非易失寄存器并建立 EBP 帧后，参数槽为：
+;   [EBP+20] range_src   压缩数据游标，值为原始 src+5
+;   [EBP+24] dst         当前输出指针（解码过程中递增）
+;   [EBP+28] workspace   概率表工作区
+;   [EBP+32] dst_end     输出停止地址
+;   [EBP+36] lc          字面量上下文属性
+;   [EBP+40] lp          字面量位置属性
+; 输入/输出/工作区指针直接使用 C 调用时的参数槽，不再复制到自定义栈槽。
 _lzma_static_x86_run:
 _exec_start:
 	; 保存解码核心会改写的非易失寄存器，满足 Windows x86 调用约定。
 	push	edi
 	push	esi
 	push	ebx
-	; 这四个立即数依次压入 dst_end、src+5、dst、workspace。每个 _rel_* 标签
-	; 位于对应 PUSH 指令之后，准备入口用标签地址减 4 找到 PUSH 的 imm32。
-	push	dword 0x12345678
-_rel_dst_end:
-	push	dword 0x12345678
-_rel_src:
-	push	dword 0x12345678
-_rel_dst:
-	push	dword 0x12345678
-_rel_workspace:
-
-_code:
-
 ; LOC 宏以 EBP 为基准向负偏移分配 4 字节工作变量。核心栈帧变量布局：
 ;   [EBP-4]  Code       range decoder 当前编码值
 ;   [EBP-8]  Range      range decoder 当前区间宽度
@@ -155,20 +113,26 @@ LOC _state
 
 ; 解码过程中 EDI 保持 _rc_bit1 的入口地址，CALL _rc_bit 等价于 CALL EDI。
 %define _rc_bit edi
-; 四个入口参数的栈槽别名。Temp 指向 workspace；Dest 是会随输出递增的
-; 当前写入指针；Src 是会随 range normalization 前进的输入指针；DestEnd
-; 是输出停止地址。后面直接读写这些内存操作数来更新指针。
-%define Src dword [ebp+12]
-%define Dest dword [ebp+8]
-%define Temp dword [ebp+4]
-%define DestEnd dword [ebp+16]
+; C 传入的指针参数槽直接作为工作变量。Temp 指向 workspace；Dest 是会随输出
+; 递增的当前写入指针；Src 是会随 range normalization 前进的输入指针；
+; DestEnd 是输出停止地址。后面直接读写参数槽来更新 Src 和 Dest。
+%define Src dword [ebp+20]
+%define Dest dword [ebp+24]
+%define Temp dword [ebp+28]
+%define DestEnd dword [ebp+32]
 
-; 建立核心 EBP 栈帧。栈上保存初始 Code、Range、四个 rep 距离及状态槽；
-; 概率模型表位于调用者传入的 workspace，长度由准备入口写进 ECX 立即数。
+; 建立解码入口的 EBP 栈帧。栈上保存 Code、Range、四个 rep 距离及状态槽；
+; Code 从 range_src 前面的初始化字节直接读取。概率表项数在此按 lc+lp 计算，
+; 概率模型表位于 C 传入的 workspace。
 ; 每个 uint16_t 概率项初始化为 1024（0x400），即自适应概率的中间值。
+
 _start:	enter	0, 0
-	push	0x12345678	; 初始 Code，由准备入口写入。
-_rel_code:
+	; range_src=src+5，向前回退 4 字节正好指向 src[1..4]。读取后按
+	; range decoder 需要的高位优先格式反转字节序，压入 Code 局部变量。
+	mov	eax, Src
+	mov	eax, [eax-4]
+	bswap	eax
+	push	eax		; Code 初值。
 	push	-1		; Range 初值为 0xFFFFFFFF。
 	xor	eax, eax
 	inc	eax
@@ -178,8 +142,14 @@ _rel_code:
 	push	eax
 	push	eax
 	push	eax
-	mov	ecx, 0x12345678	; 概率项数量，由准备入口写入。
-_rel_tsize:
+	; 按概率布局计算项数：2048 + (768 << (lc + lp))。
+	; REP STOSW 以 uint16_t 为单位，将整张概率表初始化为 0x400。
+	mov	ecx, [ebp+36]
+	add	ecx, [ebp+40]
+	mov	edx, 768
+	shl	edx, cl
+	add	edx, 2048
+	mov	ecx, edx
 	mov	edi, Temp
 	shl	eax, 10
 	rep	stosw
@@ -460,13 +430,11 @@ _copy:	pop	edx
 	jns	.1
 	jmp	_loop
 
-	; end marker、达到 dst_end 或调试版发现匹配越界都会到这里。LEAVE 丢弃
-	; 核心局部变量并恢复 EBP；随后还原入口压入的参数和非易失寄存器。
-_end:	leave
-	pop	ecX		; 丢弃 workspace 指针。
-	pop	eax		; 返回 Dest 当前值，即实际输出末地址。
-	pop	ecx		; 丢弃 src+5。
-	pop	ecx		; 丢弃 dst_end。
+	; end marker、达到 dst_end 或调试版发现匹配越界都会到这里。先保存当前
+	; 输出末地址作为返回值，再丢弃局部变量帧并恢复非易失寄存器；cdecl 调用者清栈。
+_end:
+	mov	eax, Dest
+	leave
 	pop	ebx
 	pop	esi
 	pop	edi

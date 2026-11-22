@@ -4,13 +4,15 @@ Updated: 2026-11-22
 
 ## Current state
 
-- V0.4 builds the C API and decoder as one static library:
+- V0.5 builds the C API and decoder as one static library:
   `build/lzmacapi_x86.lib` and `build/lzmacapi_x86_debug.lib`.
-- The C API signature is unchanged. C computes `dst_end`; an assembly preparation
-  function receives `src`, `dst`, `workspace`, `dst_end`, `lc`, `lp`, and `pb`.
-  Assembly reads the range initializer, derives the probability count and masks,
-  and patches its own decoder immediates. The decoder then runs through a separate
-  no-argument assembly entry.
+- The public C API signature is unchanged. C calls the assembly decoder with
+  `src+5`, `dst`, `workspace`, `dst_end`, `lc`, and `lp` as ordinary cdecl stack
+  arguments. The decoder reads and updates the pointer argument slots directly.
+- The assembly preparation entry now only patches the `pb`, `lp`, and `lc`
+  immediates. The decoder reads the initial range `Code` from `range_src-4` and
+  computes `2048 + (768 << (lc + lp))` at workspace initialization; neither value
+  is routed through a patched immediate.
 - C has no patch offsets or patch table. It uses only the assembly section bounds
   to temporarily change page permissions and flush the instruction cache. The
   section is restored to its original protection before decoding.
@@ -28,6 +30,9 @@ Updated: 2026-11-22
   debug-only. V0.3 removed C-side runtime patch metadata. V0.4 links the decoder
   as a separate NASM COFF section and moves parameter patching into assembly.
   The V0.4 source/build snapshot is under ignored `dist/V0.4/`.
+- V0.5 passes decoder arguments directly on the cdecl stack, initializes `Code`
+  and the probability count in the decoder, and limits preparation to patching
+  property immediates. Its snapshot is under ignored `dist/V0.5/`.
 
 ## Verification
 
@@ -36,13 +41,12 @@ Updated: 2026-11-22
 - `script/build.ps1` passed three byte-for-byte API decode cases for `(lc, lp,
   pb)` values `(0,0,0)`, `(3,0,2)`, and `(2,2,4)`. Debug argument and workspace
   checks passed; the release smoke test decoded and compared 86,192 bytes.
-- `dumpbin` measured C object `.text` sizes of 198 bytes release and 395 bytes
-  debug. The linked assembly section is 641 bytes release and 654 bytes debug.
-  These are object/section sizes, not final executable size deltas.
+- `dumpbin` measured C object `.text` sizes of 211 bytes release and 422 bytes
+  debug. The assembly `.lzma` section is 567 bytes release and 580 bytes debug;
+  the static libraries are 4,300 and 4,556 bytes. These are object/section and
+  archive sizes, not final executable size deltas.
 - The assembly section is linked with execute/read flags. The wrapper's
   `VirtualProtect` and `FlushInstructionCache` path was exercised by the tests.
-- After adding assembly comments, NASM generated a 641-byte release `.lzma`
-  section byte-for-byte identical to the prior build.
 - Test builds still emit MSVC-compatible `fopen` deprecation warnings.
 
 ## Remaining limits
@@ -52,5 +56,3 @@ Updated: 2026-11-22
 - The prototype is not thread-safe because it patches a shared static code
   section for each call.
 - `dist/V0.3/` remains the preserved V0.3 snapshot and was not modified.
-- The V0.4 static-code patching approach is a prototype tradeoff; later revisions
-  may simplify the C-to-assembly argument flow discussed during review.
