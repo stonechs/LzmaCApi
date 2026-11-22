@@ -39,9 +39,15 @@ if (-not $clang -or -not $linker) {
 if ($LASTEXITCODE -ne 0) { throw 'Clang C compilation failed; use a Windows SDK and MSVC-compatible runtime installation.' }
 & $linker /lib "/OUT:$(Join-Path $build 'lzmacapi_x86.lib')" (Join-Path $build 'lzma_c_api.obj')
 if ($LASTEXITCODE -ne 0) { throw 'Static library creation failed' }
+$debugObj = Join-Path $build 'lzma_c_api_debug.obj'
+$debugLib = Join-Path $build 'lzmacapi_x86_debug.lib'
+& $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /c /TC (Join-Path $src 'lzma_c_api.c') "/Fo$debugObj"
+if ($LASTEXITCODE -ne 0) { throw 'Clang debug C compilation failed' }
+& $linker /lib "/OUT:$debugLib" $debugObj
+if ($LASTEXITCODE -ne 0) { throw 'Debug static library creation failed' }
 python (Join-Path $PSScriptRoot 'make_fixture.py') $build
 if ($LASTEXITCODE -ne 0) { throw 'Fixture generation failed' }
-& $clang --target=i686-pc-windows-msvc /nologo /O1 /TC (Join-Path $src 'api_test.c') (Join-Path $build 'lzmacapi_x86.lib') "/Fe:$(Join-Path $build 'api_test.exe')" /link /subsystem:console
+& $clang --target=i686-pc-windows-msvc /nologo /O1 /TC (Join-Path $src 'api_test.c') $debugLib "/Fe:$(Join-Path $build 'api_test.exe')" /link /subsystem:console
 if ($LASTEXITCODE -ne 0) { throw 'Clang API test build failed' }
 & (Join-Path $build 'api_test.exe') (Join-Path $build 'minprops.raw') (Join-Path $build 'minprops.expected') 0 0 0
 if ($LASTEXITCODE -ne 0) { throw 'Minimum properties API tests failed' }
@@ -49,4 +55,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Minimum properties API tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Default properties API tests failed' }
 & (Join-Path $build 'api_test.exe') (Join-Path $build 'wideprops.raw') (Join-Path $build 'wideprops.expected') 2 2 4
 if ($LASTEXITCODE -ne 0) { throw 'Wide properties API tests failed' }
-Get-Item (Join-Path $build 'static_x86.bin'), (Join-Path $build 'lzma_c_api.obj'), (Join-Path $build 'lzmacapi_x86.lib'), (Join-Path $build 'api_test.exe') | Select-Object Name, Length
+& $clang --target=i686-pc-windows-msvc /nologo /O1 /TC (Join-Path $src 'smoke.c') (Join-Path $build 'lzmacapi_x86.lib') "/Fe:$(Join-Path $build 'smoke_release.exe')" /link /subsystem:console
+if ($LASTEXITCODE -ne 0) { throw 'Clang release smoke build failed' }
+& (Join-Path $build 'smoke_release.exe') (Join-Path $build 'default.raw') (Join-Path $build 'default.expected')
+if ($LASTEXITCODE -ne 0) { throw 'Release library smoke test failed' }
+Get-Item (Join-Path $build 'static_x86.bin'), (Join-Path $build 'lzma_c_api.obj'), (Join-Path $build 'lzmacapi_x86.lib'), $debugObj, $debugLib, (Join-Path $build 'api_test.exe'), (Join-Path $build 'smoke_release.exe') | Select-Object Name, Length

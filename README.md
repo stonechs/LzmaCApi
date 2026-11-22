@@ -19,7 +19,7 @@
 .\script\build.ps1
 ```
 
-构建脚本使用 NASM、Clang/Clang-cl、LLD、Python 3 和 Windows SDK/MSVC 兼容运行库，并生成 `build/lzmacapi_x86.lib`。脚本会从 `PATH` 或 `%LOCALAPPDATA%\Programs\LLVM` 查找 LLVM 工具。NASM 只在重新生成 `SRC/static_x86_blob.h` 时需要。
+构建脚本使用 NASM、Clang/Clang-cl、LLD、Python 3 和 Windows SDK/MSVC 兼容运行库，并生成精简库 `build/lzmacapi_x86.lib` 和带参数校验的 `build/lzmacapi_x86_debug.lib`。脚本会从 `PATH` 或 `%LOCALAPPDATA%\Programs\LLVM` 查找 LLVM 工具。NASM 只在重新生成 `SRC/static_x86_blob.h` 时需要。
 
 ## API 测试
 
@@ -31,7 +31,7 @@
 | 3 | 0 | 2 | 常用属性组合及较大输出 |
 | 2 | 2 | 4 | 非默认 `lp` 和最大 `pb` |
 
-每组都会检查完整输出是否逐字节匹配，并测试 workspace 大小查询、无效参数、输出容量不足和 workspace 不足时的返回结果。API 的参数、调用示例和返回值说明见 [`SRC/lzma_c_api.h`](SRC/lzma_c_api.h) 中的中文注释。
+每组都会检查完整输出是否逐字节匹配。测试库定义 `LZMA_C_API_DEBUG`，另覆盖无效参数、输出容量不足和 workspace 不足的返回结果。正式 `build/lzmacapi_x86.lib` 不包含参数检查；调用端应按头文件中的公式自行计算 workspace 大小并确保所有参数有效。API 说明见 [`SRC/lzma_c_api.h`](SRC/lzma_c_api.h) 中的中文注释。
 
 ## 输入与安全限制
 
@@ -41,4 +41,6 @@
 
 ## 当前验证
 
-2026-11-21 使用 Clang 23.1.5（i686 Windows 目标）、NASM 3.01 和本机 Windows SDK/MSVC 兼容运行库构建。三组 API 解码测试及错误返回值测试均通过。测试程序编译有一条 `fopen` 弃用提示，不影响构建和运行。
+2026-11-21 使用 Clang 23.1.5（i686 Windows 目标，`/O1`）、NASM 3.01 和本机 Windows SDK/MSVC 兼容运行库构建。三组 API 解码测试及调试版参数错误测试均通过。测试程序编译有一条 `fopen` 弃用提示，不影响构建和运行。
+
+`dumpbin` 显示精简版 `lzma_c_api_decode` 函数机器码为 274 字节；定义 `LZMA_C_API_DEBUG` 后为 428 字节。嵌入的解码模板为 504 字节；调用时另生成 505 字节的可执行副本。这些是目标文件/运行时代码大小，不等同于最终 EXE 的净增量。

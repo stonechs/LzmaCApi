@@ -33,25 +33,6 @@ static int expect_result(const char *name, LzmaCApiResult got,
     return 0;
 }
 
-static int test_workspace_sizes(void)
-{
-    unsigned lc, lp;
-    for (lc = 0; lc <= 8; ++lc) {
-        for (lp = 0; lp <= 4; ++lp) {
-            size_t expected = lc + lp <= 12
-                ? (2048u + (768u << (lc + lp))) * sizeof(uint16_t) : 0;
-            if (lzma_c_api_workspace_size(lc, lp) != expected) {
-                fprintf(stderr, "workspace size mismatch for lc=%u lp=%u\n",
-                        lc, lp);
-                return 0;
-            }
-        }
-    }
-    return lzma_c_api_workspace_size(9, 0) == 0 &&
-           lzma_c_api_workspace_size(0, 5) == 0 &&
-           lzma_c_api_workspace_size(9, 4) == 0;
-}
-
 static int test_negative_returns(const uint8_t *src, size_t src_size,
                                  uint8_t *dst, size_t dst_size,
                                  void *workspace, size_t workspace_size,
@@ -134,7 +115,7 @@ int main(int argc, char **argv)
         goto done;
     }
     dst = (uint8_t *)malloc(expected_size ? expected_size : 1);
-    workspace_size = lzma_c_api_workspace_size(lc, lp);
+    workspace_size = (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
     workspace = malloc(workspace_size);
     if (!dst || !workspace || workspace_size == 0) {
         fprintf(stderr, "could not allocate test buffers\n");
