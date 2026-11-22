@@ -27,7 +27,7 @@ for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [byte](($i * 17 + ($i -s
     (Join-Path $root 'SRC\sevenzip_test.c') `
     (Join-Path $build 'lzmacapi_x86.lib') "/Fe:$testExe" /link /subsystem:console
 if ($LASTEXITCODE -ne 0) { throw 'Could not build the 7z container test program.' }
-& $clang --target=i686-pc-windows-msvc /nologo /O1 /TC `
+& $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /TC `
     (Join-Path $root 'SRC\sevenzip_test.c') `
     (Join-Path $build 'lzmacapi_x86_debug.lib') "/Fe:$debugTestExe" /link /subsystem:console
 if ($LASTEXITCODE -ne 0) { throw 'Could not build the debug 7z container test program.' }

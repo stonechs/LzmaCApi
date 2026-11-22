@@ -45,6 +45,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
+#ifdef LZMA_C_API_DEBUG
+    /* 调试版检查签名、StartHeaderCRC 和 NextHeaderCRC。 */
     archive[0] ^= 1;
     result = sevenzip_extract_single_lzma1(archive, archive_size, output,
                                            expected_size, &output_size);
@@ -69,6 +71,20 @@ int main(int argc, char **argv)
         return 1;
     }
     archive[28] ^= 1;
+#else
+    /* 发布版不校验签名和 CRC；只确认这些检查未混入发布流程。 */
+    archive[0] ^= 1;
+    archive[8] ^= 1;
+    archive[28] ^= 1;
+    result = sevenzip_extract_single_lzma1(archive, archive_size, output,
+                                           expected_size, &output_size);
+    if (result != SEVENZIP_OK || output_size != expected_size ||
+        memcmp(output, expected, expected_size) != 0) {
+        fprintf(stderr, "release unexpectedly depends on signature/CRC: result=%d\n",
+                (int)result);
+        return 1;
+    }
+#endif
 
     if (expected_size) {
         result = sevenzip_extract_single_lzma1(archive, archive_size, output,
