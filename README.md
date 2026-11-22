@@ -50,7 +50,7 @@ SevenZipResult rc = sevenzip_extract_single_lzma1(
 
 ### 快速入口
 
-`sevenzip_extract_single_lzma1_fast` 使用相同参数，跳过完整 Header 和 FilesInfo 验证，只提取解码必需的 packed 数据偏移/长度、5 字节 LZMA 属性和解压长度，然后直接调用 `decode_folder`：
+`sevenzip_extract_single_lzma1_fast` 使用相同参数，跳过完整 Header 和 FilesInfo 验证，只提取解码必需的 packed 数据偏移/长度、5 字节 LZMA 属性和解压长度。fast 路径的 `decode_folder` 直接调用汇编解码入口，不经过 `lzma_c_api_decode` wrapper；完整库仍保留原始 LZMA C API 和普通解析路径：
 
 ```c
 SevenZipResult rc = sevenzip_extract_single_lzma1_fast(
@@ -95,6 +95,6 @@ SevenZipResult rc = sevenzip_extract_single_lzma1_fast(
 
 2026-11-22 使用 Clang 23.1.5（i686 Windows 目标，`/O1`）、NASM 3.01 和本机 Windows SDK/MSVC 兼容运行库构建。基础 API 测试和发布版 smoke test 通过。另用 7-Zip 26.04 生成 235 组原始 LZMA1 压力用例，覆盖 API 接受的属性组合和最长 1 MiB 码流。`forTest/` 中 12 个现有 7z 归档，以及新生成的 50 个 LZMA1 归档，都在 release/debug 构建下通过常规和快速接口解码，并与 7-Zip 解压结果逐字节一致。最新版本的 50 例结果保存在 `work/stress_sevenzip_50_20261122_125117_384/results.csv`；forTest 结果在 `work/forTest_decode_20261122_125112_340/results.csv`。测试程序编译有 `fopen` 弃用提示，不影响构建和运行。
 
-调试版会填写 `dst_size` 并校验实际输出长度；发布版不读写 `dst_size`，可传 `NULL`，由汇编直接解码。项目构建脚本按 `/O1` 编译时，`lzma_c_api_decode` `.text` 为发布版 47 字节、调试版 235 字节；汇编段为 534/550 字节；包含快速接口的 7z 容器静态库为 7,320/9,332 字节。这些大小不等同于最终 EXE 的净增量。
+调试版会填写 `dst_size` 并校验实际输出长度；发布版不读写 `dst_size`，可传 `NULL`，由汇编直接解码。V0.6.2 的 `/O1` 构建中，`lzma_c_api_decode` `.text` 为 release/debug 43/225 字节，汇编段为 540/556 字节；fast-only 静态库为 4,984/5,412 字节，完整静态库为 8,280/10,952 字节。库文件大小不等同于最终 EXE 的净增量。
 
-另用 Clang 23.1.5 的 `-Oz -ffunction-sections` 单独编译 C 文件，并从 COFF 函数段统计代码字节：容器 C 代码合计 1,804/2,792 字节（release/debug），其中 `sevenzip_extract_single_lzma1_fast` 为 186/207 字节，完整入口为 1,202/1,783 字节；`decode_folder` 为 172/347 字节。`lzma_c_api_decode` 包装为 47/216 字节，NASM 解码核心为 534/550 字节，三部分合计 2,385/3,558 字节。快速函数直接跳过固定宽度字段，并只保存 LZMA 属性首字节。该统计不含运行库依赖、常量数据、对齐和最终链接裁剪，因此不同于最终 EXE 的增量。
+另用 Clang 23.1.5 `-Oz -ffunction-sections` 编译 V0.6.2 fast 源文件并统计 COFF 函数段：`sevenzip_extract_single_lzma1_fast` 为 245/426 字节，`read_number_fast` 为 79/79 字节，fast 源文件 `.text` 合计 324/505 字节（release/debug）。原始 API wrapper 为 43/203 字节，但 fast 入口直接调用汇编，因此只使用 fast API 的程序不会因该调用拉入 wrapper。NASM 核心为 540/556 字节；fast C 与汇编核心合计 864/1,061 字节。该统计不含运行库依赖、常量数据、对齐和最终链接裁剪，不等同于最终 EXE 的净增量。

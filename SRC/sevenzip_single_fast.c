@@ -1,11 +1,20 @@
 #include "sevenzip_single.h"
-#include "lzma_c_api.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #define SEVENZIP_START_SIZE 32u
 #define SEVENZIP_MAX_DECODED 0x01000000u
+
+#ifdef LZMA_C_API_DEBUG
+extern uint8_t *__cdecl lzma_static_x86_run(
+    const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
+    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb);
+#else
+extern void __cdecl lzma_static_x86_run(
+    const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
+    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb);
+#endif
 
 typedef struct FastFolder {
     size_t packed_offset;
@@ -75,8 +84,9 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
     unsigned lc, lp, pb;
     size_t workspace_size;
     void *workspace;
-    LzmaCApiResult rc;
-    size_t decoded_size = 0;
+#ifdef LZMA_C_API_DEBUG
+    uint8_t *end;
+#endif
 #ifdef LZMA_C_API_DEBUG
     if (folder->packed_offset > packed_limit ||
         folder->packed_size > packed_limit - folder->packed_offset ||
@@ -97,16 +107,20 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
     workspace_size = (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
     workspace = malloc(workspace_size);
     if (!workspace) return SEVENZIP_MEMORY_ERROR;
-    rc = lzma_c_api_decode(archive + folder->packed_offset,
-                           folder->packed_size, output, output_capacity,
-                           folder->unpacked_size, &decoded_size,
-                           lc, lp, pb, workspace, workspace_size);
-    free(workspace);
-    if (rc != LZMA_C_API_OK) return SEVENZIP_DECODE_ERROR;
 #ifdef LZMA_C_API_DEBUG
-    if (decoded_size != folder->unpacked_size) return SEVENZIP_DECODE_ERROR;
+    if (archive[folder->packed_offset] != 0) {
+        free(workspace);
+        return SEVENZIP_DECODE_ERROR;
+    }
+    end = lzma_static_x86_run(archive + folder->packed_offset, output, workspace,
+                              folder->unpacked_size, workspace_size, lc, lp, pb);
+    free(workspace);
+    if (end < output || (size_t)(end - output) != folder->unpacked_size)
+        return SEVENZIP_DECODE_ERROR;
 #else
-    (void)decoded_size;
+    lzma_static_x86_run(archive + folder->packed_offset, output, workspace,
+                        folder->unpacked_size, workspace_size, lc, lp, pb);
+    free(workspace);
 #endif
     *output_size = folder->unpacked_size;
     return SEVENZIP_OK;
@@ -114,7 +128,7 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
 
 /*
  * 快速路径：按固定布局提取 LZMA1 解码所需字段，然后由本文件中的
- * decode_folder 调用 LZMA C API。它不验证 7z 结构字段或 CRC。
+ * decode_folder 直接调用汇编解码核心。它不验证 7z 结构字段或 CRC。
  *
  * 参数：archive 是完整 7z 文件的只读地址，archive_size 是字节数；output
  * 是调用方提供的可写解压缓冲区，output_capacity 是其容量；output_size 指向
