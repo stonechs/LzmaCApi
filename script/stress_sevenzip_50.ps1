@@ -13,16 +13,29 @@ if (-not (Test-Path (Join-Path $build 'lzmacapi_x86.lib'))) {
 }
 
 $runRoot = Join-Path $work ('stress_sevenzip_50_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff'))
+$revision = git describe --tags --exact-match 2>$null
+if (-not $revision) { $revision = git rev-parse --short HEAD }
+$buildStamp = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
+$buildId = [guid]::NewGuid().ToString('N').Substring(0, 8)
+$artifactDir = Join-Path $root "dist\builds\${revision}_stress50_${buildStamp}_${buildId}"
 New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
-$releaseExe = Join-Path $runRoot 'sevenzip_release.exe'
-$debugExe = Join-Path $runRoot 'sevenzip_debug.exe'
+New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+@(
+    "Revision: $revision"
+    "Built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff K')"
+    'Target: i686-pc-windows-msvc'
+    'Compiler flags: clang-cl /O1'
+    "Executables and map files: $artifactDir"
+) | Set-Content -Encoding ascii (Join-Path $artifactDir 'build_info.txt')
+$releaseExe = Join-Path $artifactDir 'sevenzip_release.exe'
+$debugExe = Join-Path $artifactDir 'sevenzip_debug.exe'
 & $clang --target=i686-pc-windows-msvc /nologo /O1 /TC `
     (Join-Path $root 'SRC\sevenzip_test.c') `
-    (Join-Path $build 'lzmacapi_x86.lib') "/Fe:$releaseExe" /link /subsystem:console
+    (Join-Path $build 'lzmacapi_x86.lib') "/Fe:$releaseExe" /link /subsystem:console "/MAP:$(Join-Path $artifactDir 'sevenzip_release.map')"
 if ($LASTEXITCODE -ne 0) { throw 'Could not build the release stress tester.' }
 & $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /TC `
     (Join-Path $root 'SRC\sevenzip_test.c') `
-    (Join-Path $build 'lzmacapi_x86_debug.lib') "/Fe:$debugExe" /link /subsystem:console
+    (Join-Path $build 'lzmacapi_x86_debug.lib') "/Fe:$debugExe" /link /subsystem:console "/MAP:$(Join-Path $artifactDir 'sevenzip_debug.map')"
 if ($LASTEXITCODE -ne 0) { throw 'Could not build the debug stress tester.' }
 
 function New-StressBytes([int]$caseIndex, [int]$length) {
@@ -85,6 +98,7 @@ $report = Join-Path $runRoot 'results.csv'
 $results | Export-Csv -LiteralPath $report -NoTypeInformation -Encoding UTF8
 $results | Format-Table -AutoSize
 Write-Output "Report: $report"
+Write-Output "Executables and linker maps saved together in: $artifactDir"
 $failed = @($results | Where-Object { $_.Release -ne 'PASS' -or $_.Debug -ne 'PASS' })
 if ($results.Count -ne 50 -or $failed.Count) {
     throw "Stress test incomplete: $($results.Count)/50 completed; $($failed.Count) failed."

@@ -2,7 +2,35 @@
 
 Updated: 2026-11-22
 
+## 构建体积记录
+
+- 所有会链接测试可执行文件的构建脚本（`build.ps1`、`test_sevenzip.ps1`、
+  `test_forTest_archives.ps1`、`stress_sevenzip_50.ps1`）每次运行都会在
+  `dist/builds/<版本或提交>_<构建时间>/` 创建独立目录，将 `.map` 与它对应的
+  `.exe` 放在一起，并保存 `build_info.txt`。同一版本的重复构建也不会覆盖旧记录。
+- Map 表对应 i686 Windows 测试可执行文件的实际链接结果；函数地址可用于
+  对照体积变化。静态 `.lib` 和 `.obj` 是链接前产物，本身不生成链接 map。
+
 ## Current state
+
+- V0.6.2 的 fast `decode_folder` 直接调用 `lzma_static_x86_run`，不再依赖
+  `lzma_c_api_decode` wrapper；完整库仍提供 raw LZMA C API。Debug fast 路径保留
+  输入起始字节、区间、输出容量和实际输出长度检查。release/debug 构建、API
+  测试、`forTest/` 12 个归档、压力集 50 个归档、fast-only 双配置 smoke 全部通过，
+  总耗时约 15 秒。归档比较报告：
+  `work/forTest_decode_20261122_183554_609/results.csv`、
+  `work/stress_sevenzip_50_20261122_183600_055/results.csv`。
+- Clang i686 `-Oz` 下 fast 入口函数为 245/426 字节，`read_number_fast` 为
+  79/79 字节，fast C `.text` 合计 324/505 字节；加汇编核心后为 864/1,061 字节。
+
+- V0.6.1 将解码器第 4 个 cdecl 参数改为 `output_size`；汇编入口计算
+  `dst + output_size` 并覆盖该参数槽，C wrapper 不再执行指针加法。回归中
+  构建/API 用例、`forTest/` 12 个归档和压力集 50 个归档均在 release/debug 通过，
+  共 124 次归档解码逐字节匹配，总耗时约 10 秒。结果见
+  `work/forTest_decode_20261122_182529_307/results.csv` 和
+  `work/stress_sevenzip_50_20261122_182534_398/results.csv`。
+- Clang i686 `-Oz` 下，`lzma_c_api_decode` wrapper 为 43/203 字节，汇编段为
+  540/556 字节（release/debug）；C wrapper 和汇编段合计 583/759 字节。
 
 - 新增 `SRC/sevenzip_single_fast.c`：fast 路径和专用 `decode_folder` 同文件，
   不依赖完整解析器。`read_number_fast` 已采用一次 32 位读取、按首字节前缀
@@ -69,7 +97,8 @@ Updated: 2026-11-22
 - V0.5.7 builds the C API, decoder, and optional 7z container layer as one static library:
   `build/lzmacapi_x86.lib` and `build/lzmacapi_x86_debug.lib`.
 - The public C API signature is unchanged. C passes `src`, `dst`, `workspace`,
-  `dst_end`, `workspace_size`, and `lc/lp/pb` to the decoder as cdecl stack args.
+  `output_size`, `workspace_size`, and `lc/lp/pb` to the decoder as cdecl stack args;
+  assembly computes `dst_end` in the output-size argument slot.
   The decoder advances `src` by five bytes itself.
 - The decoder computes the `pb` and `lp` masks once into stack locals, uses `lc`
   as a variable shift count, and uses `workspace_size/2` as the probability
