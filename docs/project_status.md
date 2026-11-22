@@ -11,8 +11,8 @@ Updated: 2026-11-22
   均在 release/debug 通过并与 7-Zip 输出逐字节匹配。结果见
   `work/forTest_decode_20261122_125112_340/results.csv` 和
   `work/stress_sevenzip_50_20261122_125117_384/results.csv`。
-- V0.5.7 提交和标签待生成；基线为 V0.5.6：
-  `46cd3f3125d71d83108c98b9c8800c36b825b1fc`。
+- V0.5.7 实现提交：`2658ad68689ee0f7c2eda10817c2aadb9c22480e`，标签 `V0.5.7`；
+  V0.5.6 基线为 `46cd3f3125d71d83108c98b9c8800c36b825b1fc`。
 - V0.5.6 新增 `sevenzip_extract_single_lzma1_fast`：单个接口函数按固定布局
   读取 StartHeader、PackInfo 和 UnpackInfo 必需字段，跳过可选 Pack CRC 后直接
   调用 `decode_folder`，不调用 `parse_header` / `parse_streams`，也不解析
