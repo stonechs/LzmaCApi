@@ -31,6 +31,8 @@ Updated: 2026-11-21
   release callers must compare `dst_size` with the expected size themselves.
 - A local `dist/V0.1/` snapshot contains the version sources, scripts,
   documentation, and current build outputs; the snapshot is ignored by Git.
+- The V0.2 source and build snapshot is stored under `dist/V0.2/` and ignored
+  by Git.
 
 ## Verification
 
