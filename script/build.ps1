@@ -1,28 +1,54 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $root 'build'
+$work = Join-Path $root 'work'
 $src = Join-Path $root 'SRC'
 $asm = Join-Path $src 'lzma_static_x86.asm'
 New-Item -ItemType Directory -Force -Path $build | Out-Null
-function Write-BlobHeader($binaryPath, $headerPath, $guard) {
+New-Item -ItemType Directory -Force -Path $work | Out-Null
+function Write-BlobHeader($binaryPath, $codePath, $headerPath, $guard) {
     $bytes = [IO.File]::ReadAllBytes($binaryPath)
+    if ($bytes.Length -lt 40) { throw "Invalid NASM template: $binaryPath" }
+    $codeLength = [BitConverter]::ToUInt32($bytes, 0)
+    if ($bytes.Length -ne 40 + $codeLength) { throw "Invalid NASM metadata: $binaryPath" }
+    $macroNames = @(
+        'LZMA_STATIC_X86_CODE_SIZE', 'LZMA_STATIC_X86_PATCH_CODE_INIT',
+        'LZMA_STATIC_X86_PATCH_PROBS', 'LZMA_STATIC_X86_PATCH_PB',
+        'LZMA_STATIC_X86_PATCH_LP', 'LZMA_STATIC_X86_PATCH_LC',
+        'LZMA_STATIC_X86_PATCH_SRC', 'LZMA_STATIC_X86_PATCH_DST',
+        'LZMA_STATIC_X86_PATCH_WORKSPACE', 'LZMA_STATIC_X86_PATCH_DST_END'
+    )
+    $values = [Collections.Generic.List[uint32]]::new()
+    $values.Add($codeLength)
+    for ($i = 1; $i -lt 10; $i++) {
+        $values.Add([BitConverter]::ToUInt32($bytes, $i * 4))
+    }
+    $code = [byte[]]::new([int]$codeLength)
+    [Array]::Copy($bytes, 40, $code, 0, [int]$codeLength)
+    [IO.File]::WriteAllBytes($codePath, $code)
+
     $lines = [Collections.Generic.List[string]]::new()
     $lines.Add("#ifndef $guard")
     $lines.Add("#define $guard")
+    for ($i = 0; $i -lt $macroNames.Length; $i++) {
+        $lines.Add("#define $($macroNames[$i]) $($values[$i])u")
+    }
     $lines.Add('static const unsigned char lzma_static_x86_blob[] = {')
-    for ($i = 0; $i -lt $bytes.Length; $i += 16) {
-        $last = [Math]::Min($i + 15, $bytes.Length - 1)
-        $chunk = $bytes[$i..$last] | ForEach-Object { '0x{0:x2}' -f $_ }
+    for ($i = 0; $i -lt $code.Length; $i += 16) {
+        $last = [Math]::Min($i + 15, $code.Length - 1)
+        $chunk = $code[$i..$last] | ForEach-Object { '0x{0:x2}' -f $_ }
         $lines.Add('    ' + ($chunk -join ', ') + ',')
     }
     $lines.Add('};')
     $lines.Add('#endif')
     [IO.File]::WriteAllLines($headerPath, $lines)
 }
-nasm -f bin -O9 $asm -o (Join-Path $build 'static_x86.bin')
-Write-BlobHeader (Join-Path $build 'static_x86.bin') (Join-Path $src 'static_x86_blob.h') 'LZMA_STATIC_X86_BLOB_H'
-nasm -f bin -O9 -D LZMA_C_API_DEBUG=1 $asm -o (Join-Path $build 'static_x86_debug.bin')
-Write-BlobHeader (Join-Path $build 'static_x86_debug.bin') (Join-Path $src 'static_x86_blob_debug.h') 'LZMA_STATIC_X86_BLOB_DEBUG_H'
+$releaseFull = Join-Path $work 'static_x86_full.bin'
+$debugFull = Join-Path $work 'static_x86_debug_full.bin'
+nasm -f bin -O9 $asm -o $releaseFull
+Write-BlobHeader $releaseFull (Join-Path $build 'static_x86.bin') (Join-Path $src 'static_x86_blob.h') 'LZMA_STATIC_X86_BLOB_H'
+nasm -f bin -O9 -D LZMA_C_API_DEBUG=1 $asm -o $debugFull
+Write-BlobHeader $debugFull (Join-Path $build 'static_x86_debug.bin') (Join-Path $src 'static_x86_blob_debug.h') 'LZMA_STATIC_X86_BLOB_DEBUG_H'
 $clangCommand = Get-Command clang-cl -ErrorAction SilentlyContinue
 $linkerCommand = Get-Command lld-link -ErrorAction SilentlyContinue
 if (-not $clangCommand) {
@@ -64,4 +90,4 @@ if ($LASTEXITCODE -ne 0) { throw 'Wide properties API tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Clang release smoke build failed' }
 & (Join-Path $build 'smoke_release.exe') (Join-Path $build 'default.raw') (Join-Path $build 'default.expected')
 if ($LASTEXITCODE -ne 0) { throw 'Release library smoke test failed' }
-Get-Item (Join-Path $build 'static_x86.bin'), (Join-Path $build 'lzma_c_api.obj'), (Join-Path $build 'lzmacapi_x86.lib'), $debugObj, $debugLib, (Join-Path $build 'api_test.exe'), (Join-Path $build 'smoke_release.exe') | Select-Object Name, Length
+Get-Item (Join-Path $build 'static_x86.bin'), (Join-Path $build 'static_x86_debug.bin'), (Join-Path $build 'lzma_c_api.obj'), (Join-Path $build 'lzmacapi_x86.lib'), $debugObj, $debugLib, (Join-Path $build 'api_test.exe'), (Join-Path $build 'smoke_release.exe') | Select-Object Name, Length
