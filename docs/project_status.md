@@ -12,8 +12,8 @@ Updated: 2026-11-22
   下均与 7-Zip 输出逐字节一致。结果位于
   `work/forTest_decode_20261122_123624_350/results.csv` 和
   `work/stress_sevenzip_50_20261122_123630_461/results.csv`。
-- V0.5.6 提交和标签待生成；基线为 V0.5.5：
-  `90438c6407203dd6bbcf657231abe3125c9819f0`。
+- V0.5.6 实现提交：`46cd3f3125d71d83108c98b9c8800c36b825b1fc`，标签 `V0.5.6`；
+  V0.5.5 基线为 `90438c6407203dd6bbcf657231abe3125c9819f0`。
 - V0.5.5 显式隔离 Reader 失败分支：`reader_byte`、`reader_u32`、StreamsInfo
   和 Header 属性读取统一使用调试/发布两套宏。发布版不生成 `reader_take`
   越界失败分支，也不生成 `reader_size` 转换失败判断；格式标记、字段值和
