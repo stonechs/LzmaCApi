@@ -21,9 +21,11 @@ typedef enum SevenZipResult {
 
 /*
  * 在内存中解析并解压只含一个非空文件的 7z 文档。
- * 当前仅支持单个 LZMA1 coder、单个 packed stream；不支持 LZMA2、加密、
- * 多文件、多流、滤镜链或分卷。可识别普通头部和 LZMA1 编码的压缩头部。
- * 目标缓冲区由调用方提供；内部会临时分配概率 workspace 和压缩头缓冲区。
+ * 当前仅支持普通 Header、一个非空文件、单个 packed stream 和单个 LZMA1
+ * coder；不支持压缩 Header、LZMA2、加密、滤镜、多文件、多流或分卷。
+ * 目标缓冲区由调用方提供；内部会临时分配概率 workspace。
+ * 定义 LZMA_C_API_DEBUG 时检查 Reader、归档数据边界、输出容量、签名和 CRC；
+ * 发布构建省略这些有效性检查，调用方必须传入完整有效的归档和足够大的缓冲区。
  */
 SevenZipResult sevenzip_extract_single_lzma1(
     const uint8_t *archive, size_t archive_size,

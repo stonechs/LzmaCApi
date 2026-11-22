@@ -23,7 +23,7 @@
 
 ## 单文件 7z 容器 API
 
-`SRC/sevenzip_single.h` 提供 `sevenzip_extract_single_lzma1`。调用方将完整 7z 文件读入内存并提供输出缓冲区；函数解析 7z 头部，再调用本项目的 `lzma_c_api_decode` 解压文件数据。压缩头部也可由该 API 解码。内部按 LZMA 属性分配 workspace。定义 `LZMA_C_API_DEBUG` 时会校验签名和可用 CRC；发布版不编入这些校验代码。7z 的签名头包含校验值、下一头部偏移/大小和下一头部 CRC；容器层仍会读取偏移和长度以定位数据。[7z 格式定义](https://github.com/ip7z/7zip/blob/main/DOC/7zFormat.txt)
+`SRC/sevenzip_single.h` 提供 `sevenzip_extract_single_lzma1`。调用方将完整 7z 文件读入内存并提供输出缓冲区；函数解析普通 7z Header，再调用本项目的 `lzma_c_api_decode` 解压文件数据。内部按 LZMA 属性分配 workspace。它只支持一个非空文件、一个 packed stream 和一个 LZMA1 coder；压缩 Header、LZMA2、加密、滤镜、多文件、多流和分卷均不支持。定义 `LZMA_C_API_DEBUG` 时会校验签名、CRC、Reader 读取范围、归档数据范围和输出容量；发布版省略这些检查，调用方必须提供完整有效的归档及足够大的输出缓冲区。[7z 格式定义](https://github.com/ip7z/7zip/blob/main/DOC/7zFormat.txt)
 
 最小调用示例：
 
@@ -36,9 +36,9 @@ SevenZipResult rc = sevenzip_extract_single_lzma1(
 
 成功时 `output_size` 是实际输出长度；失败时参见 `SevenZipResult`。输出容量不足返回 `SEVENZIP_OUTPUT_TOO_SMALL`。
 
-当前仅支持一个非空文件、一个 packed stream 和一个 LZMA1 coder；不支持 LZMA2、加密、滤镜、多文件、多流或分卷。解压输出和压缩头最大为 16 MiB。C 容器层不调用 `archive.js` 的 JavaScript 解码模块。
+调试版还将解压输出限制为 16 MiB。C 容器层不调用 `archive.js` 的 JavaScript 解码模块。
 
-7z 本身可以使用多种编码器和滤镜；该 API 是项目现有 LZMA1 汇编核心上的窄容器适配层，不是通用 7z 解包器。容器层始终检查数据偏移和长度；只有定义 `LZMA_C_API_DEBUG` 的构建才计算并比较签名和 CRC。解码核心不校验每次读取是否仍在压缩数据范围内，因此整个实现不属于恶意输入防护边界；只应处理可信且完整的归档。
+7z 本身可以使用多种编码器和滤镜；该 API 是项目现有 LZMA1 汇编核心上的窄容器适配层，不是通用 7z 解包器。发布版假设结构、输入长度和输出容量都有效；调试版执行相应检查。解码核心仍不校验每次压缩数据读取是否越界，因此整个实现只应处理可信且完整的归档。
 
 生成真实 LZMA1 归档并测试容器层（需要安装 7-Zip）：
 
@@ -73,8 +73,8 @@ SevenZipResult rc = sevenzip_extract_single_lzma1(
 
 ## 当前验证
 
-2026-11-22 使用 Clang 23.1.5（i686 Windows 目标，`/O1`）、NASM 3.01 和本机 Windows SDK/MSVC 兼容运行库构建。基础 API 测试和发布版 smoke test 通过。另用 7-Zip 26.04 生成 235 组原始 LZMA1 压力用例，覆盖 API 接受的属性组合和最长 1 MiB 码流。`forTest/` 中 12 个现有 7z 归档，以及新生成的 50 个 LZMA1 归档，都在 release/debug 构建下解码成功并与 7-Zip 解压结果逐字节一致。50 例清单和结果保存在 `work/stress_sevenzip_50_20261122_104801_625/results.csv`；forTest 结果在 `work/forTest_decode_20261122_104754_505/results.csv`。测试程序编译有 `fopen` 弃用提示，不影响构建和运行。
+2026-11-22 使用 Clang 23.1.5（i686 Windows 目标，`/O1`）、NASM 3.01 和本机 Windows SDK/MSVC 兼容运行库构建。基础 API 测试和发布版 smoke test 通过。另用 7-Zip 26.04 生成 235 组原始 LZMA1 压力用例，覆盖 API 接受的属性组合和最长 1 MiB 码流。`forTest/` 中 12 个现有 7z 归档，以及新生成的 50 个 LZMA1 归档，都在 release/debug 构建下解码成功并与 7-Zip 解压结果逐字节一致。当前版本的 50 例结果保存在 `work/stress_sevenzip_50_20261122_111055_800/results.csv`；forTest 结果在 `work/forTest_decode_20261122_111055_827/results.csv`。测试程序编译有 `fopen` 弃用提示，不影响构建和运行。
 
 调试版会填写 `dst_size` 并校验实际输出长度；发布版不读写 `dst_size`，可传 `NULL`，由汇编直接解码。项目构建脚本按 `/O1` 编译时，`lzma_c_api_decode` `.text` 为发布版 47 字节、调试版 235 字节；汇编段为 534/550 字节；包含 7z 容器层的静态库为 8,672/9,256 字节。这些大小不等同于最终 EXE 的净增量。
 
-另用 Clang 23.1.5 的 `-Oz -ffunction-sections` 单独编译 C 文件，并从 COFF 函数段统计代码字节：7z 容器函数合计 2,344/2,567 字节（release/debug），`lzma_c_api_decode` 包装为 47/216 字节，NASM 解码核心为 534/550 字节。三部分合计 2,925/3,333 字节。汇编核心不受 Clang `-Oz` 影响；`read_u32le`、`read_u64le`、`reader_number`、`decode_properties` 等小函数在 `-Oz` 下被内联。该统计不含运行库依赖、常量数据、对齐和最终链接裁剪，因此不同于最终 EXE 的增量。
+另用 Clang 23.1.5 的 `-Oz -ffunction-sections` 单独编译 C 文件，并从 COFF 函数段统计代码字节：7z 容器 C 函数合计 1,562/2,358 字节（release/debug），`lzma_c_api_decode` 包装为 47/216 字节，NASM 解码核心为 534/550 字节。三部分合计 2,143/3,124 字节。release 中 `parse_streams`、`parse_header`、`decode_folder` 等主体内联到 `sevenzip_extract_single_lzma1`；debug 函数段分别为入口 1,901、`reader_size` 166、`read_digest_vector` 99、`reader_take` 68、`reader_byte` 28、`reader_u32` 39、`crc32_bytes` 57 字节。汇编核心不受 Clang `-Oz` 影响。该统计不含运行库依赖、常量数据、对齐和最终链接裁剪，因此不同于最终 EXE 的增量。

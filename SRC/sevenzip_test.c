@@ -71,6 +71,12 @@ int main(int argc, char **argv)
         return 1;
     }
     archive[28] ^= 1;
+    result = sevenzip_extract_single_lzma1(archive, archive_size - 1,
+                                           output, expected_size, &output_size);
+    if (result != SEVENZIP_INVALID_ARCHIVE) {
+        fprintf(stderr, "truncated archive check failed: result=%d\n", (int)result);
+        return 1;
+    }
 #else
     /* 发布版不校验签名和 CRC；只确认这些检查未混入发布流程。 */
     archive[0] ^= 1;
@@ -86,6 +92,7 @@ int main(int argc, char **argv)
     }
 #endif
 
+#ifdef LZMA_C_API_DEBUG
     if (expected_size) {
         result = sevenzip_extract_single_lzma1(archive, archive_size, output,
                                                expected_size - 1, &output_size);
@@ -94,6 +101,7 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+#endif
     puts("7z single-file extraction checks passed");
     free(output);
     free(expected);

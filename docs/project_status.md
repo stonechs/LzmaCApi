@@ -4,22 +4,24 @@ Updated: 2026-11-22
 
 ## Current state
 
-- V0.5.3 延续 V0.5.2 单文件 7z 容器适配：`SRC/sevenzip_single.c/.h` 有完整
-  中文注释。签名、StartHeader/NextHeader、packed stream 和解压数据 CRC 的
-  计算/比较全部由 `LZMA_C_API_DEBUG` 隔离；发布对象不编入这些检查。
+- V0.5.4 收窄 7z 解析：只接受普通 Header、单非空文件、单 packed stream、
+  单 LZMA1 coder。压缩 Header 分支已移除。Reader 读取越界、长度转换、归档
+  偏移/长度、输出容量、签名和 CRC 检查均由 `LZMA_C_API_DEBUG` 隔离；发布版
+  要求调用方传入结构和长度都有效的归档及足够大的输出缓冲区。
 - `forTest/` 的 12 个现存归档在 release/debug 两种库下均解码成功，输出逐字节
   匹配 7-Zip 提取结果。`script/test_forTest_archives.ps1` 可复现该验证。
 - 50 个 LZMA1 归档压力测试覆盖不同内容模式、文件长度（4 KiB 至 1 MiB）、
   `lc/lp/pb` 合法组合、字典大小和压缩等级；release/debug 共 100 次归档解码
   全部通过。生成器和结果位于 `script/stress_sevenzip_50.ps1` 与
-  `work/stress_sevenzip_50_20261122_104801_625/results.csv`。
+  `work/stress_sevenzip_50_20261122_111055_800/results.csv`。
 - 2026-11-22：Clang 23.1.5 / i686、NASM 3.01 构建通过；原有 API、release
   smoke、单文件 7z 正常与错误输入测试均通过。
-- V0.5.3 实现提交：`9608a829bb3e78abb93ceab50ed8593317009cba`，标签 `V0.5.3`。
+- V0.5.3 基线提交：`9608a829bb3e78abb93ceab50ed8593317009cba`，标签 `V0.5.3`；
+  本轮收窄版待标记 `V0.5.4`。
 - 后续：需要覆盖 LZMA2 时，须先为现有解码核心增加 LZMA2 chunk/state 支持；
   当前没有其他待做项。
 
-- V0.5.3 builds the C API, decoder, and optional 7z container layer as one static library:
+- V0.5.4 builds the C API, decoder, and optional 7z container layer as one static library:
   `build/lzmacapi_x86.lib` and `build/lzmacapi_x86_debug.lib`.
 - The public C API signature is unchanged. C passes `src`, `dst`, `workspace`,
   `dst_end`, `workspace_size`, and `lc/lp/pb` to the decoder as cdecl stack args.
@@ -60,6 +62,8 @@ Updated: 2026-11-22
   debug builds: all API-accepted property tuples and ten long cases up to 1 MiB.
 - All 12 archives supplied in `forTest/` and all 50 generated LZMA1 7z cases passed
   in release and debug builds, with output compared byte-for-byte against 7-Zip.
+  Results: `work/forTest_decode_20261122_111055_827/results.csv` and
+  `work/stress_sevenzip_50_20261122_111055_800/results.csv`.
 - The release container object is compiled without signature/CRC checks; the test
   harness confirmed corrupted signature/CRC fields are ignored by release and
   rejected by debug.
@@ -71,23 +75,21 @@ Updated: 2026-11-22
 
   | Function | Release bytes | Debug bytes |
   | --- | ---: | ---: |
-  | `sevenzip_extract_single_lzma1` | 451 | 544 |
-  | `parse_streams` | 673 | 673 |
-  | `decode_folder` | 274 | 347 |
-  | `parse_header` | 559 | 559 |
-  | `reader_byte` | 28 | 28 |
-  | `reader_size` | 166 | 166 |
-  | `read_digest_vector` | 99 | 99 |
-  | `reader_take` | 55 | 55 |
-  | `reader_u32` | 39 | 39 |
+  | `sevenzip_extract_single_lzma1` (含已内联解析函数) | 1,310 | 1,901 |
+  | `reader_size` | 160 | 166 |
+  | `read_digest_vector` | 92 | 99 |
+  | `reader_byte` | 内联 | 28 |
+  | `reader_take` | 内联 | 68 |
+  | `reader_u32` | 内联 | 39 |
   | `crc32_bytes` | — | 57 |
-  | **7z container C total** | **2,344** | **2,567** |
+  | **7z container C total** | **1,562** | **2,358** |
   | `lzma_c_api_decode` wrapper | 47 | 216 |
   | NASM LZMA core (`.lzma`) | 534 | 550 |
-  | **Combined code sections** | **2,925** | **3,333** |
+  | **Combined code sections** | **2,143** | **3,124** |
 
-  `read_u32le`, `read_u64le`, `reader_number`, and `decode_properties` are inlined
-  under `-Oz`. Assembly is not compiled by Clang, so its section is reported as-is.
+  `parse_streams`, `parse_header`, `decode_folder`, `read_u32le`, `read_u64le`,
+  `reader_number`, and `decode_properties` are inlined into the entry under `-Oz`.
+  Assembly is not compiled by Clang, so its section is reported as-is.
   The totals exclude runtime-library functions, constants, alignment, and link-time
   dead-code removal; they are not final executable size deltas.
 - An earlier runtime-property build on an Intel N100 was compared with the
@@ -101,11 +103,11 @@ Updated: 2026-11-22
 
 - x86 Windows only. Input must be trusted and complete; compressed source bounds
   are not checked by the decoder core.
-- The 7z layer accepts a single non-empty LZMA1 file (and a single LZMA1 coder for
-  an encoded header), with a 16 MiB unpacked-size cap. It rejects LZMA2, encryption,
-  filters, multiple files/streams, and split archives. Header/data CRCs are checked
-  when present, but CRC checks do not make the unchecked decoder safe for hostile
-  input.
+- The 7z layer accepts only a plain Header with one non-empty LZMA1 file, one packed
+  stream, and one coder. It rejects compressed headers, LZMA2, encryption, filters,
+  multiple files/streams, and split archives. Release parsing has no structural
+  bounds checks; debug parsing does. The decoder itself still does not validate
+  compressed source bounds, so inputs must remain trusted and complete.
 - Concurrent calls are supported when each call uses non-overlapping input,
   output, and workspace buffers.
 - `dist/V0.3/` remains the preserved V0.3 snapshot and was not modified.

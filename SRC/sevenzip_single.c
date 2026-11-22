@@ -10,9 +10,9 @@
 
 /*
  * 单文件 7z 容器适配层。
- * 本模块只处理容器结构和单个 LZMA1 编码流；实际 range 解码交给本项目的
- * lzma_c_api_decode。Reader 始终带长度，所有容器字段读取都先做边界检查。
- * LZMA 核心本身仍不检查压缩流读取边界，因此调用者必须提供可信、完整的档案。
+ * 本模块只处理普通 Header、单文件、单 packed stream 和 LZMA1 coder；实际
+ * range 解码交给本项目的 lzma_c_api_decode。调试构建逐字段检查 Reader 和
+ * 数据边界；发布构建假设输入完整且符合上述限制，省略边界检查以缩小代码。
  */
 typedef struct Reader {
     const uint8_t *data;
@@ -65,19 +65,21 @@ static uint32_t crc32_bytes(const uint8_t *data, size_t size)
 }
 #endif
 
-/* 从 Reader 取出 n 字节；失败时置位 failed，后续读取都会继续失败。 */
+/* 取出 n 字节；仅调试版检查范围并设置 failed，发布版直接推进游标。 */
 static int reader_take(Reader *r, size_t n, const uint8_t **out)
 {
-    if (r->failed || n > r->size - r->pos) {
+#ifdef LZMA_C_API_DEBUG
+    if (r->failed || r->pos > r->size || n > r->size - r->pos) {
         r->failed = 1;
         return 0;
     }
+#endif
     if (out) *out = r->data + r->pos;
     r->pos += n;
     return 1;
 }
 
-/* 读取一个字节；越界时返回 0，并通过 failed 区分真实的 0 字节。 */
+/* 读取一个字节；调试版越界时返回 0，并通过 failed 区分真实的 0 字节。 */
 static uint8_t reader_byte(Reader *r)
 {
     const uint8_t *p;
@@ -104,7 +106,7 @@ static uint64_t reader_number(Reader *r)
     return value;
 }
 
-/* 读取固定 4 字节小端整数，供 CRC 字段使用。 */
+/* 读取固定 4 字节小端整数；reader_take 的边界校验仅在调试版执行。 */
 static int reader_u32(Reader *r, uint32_t *value)
 {
     const uint8_t *p;
@@ -113,14 +115,16 @@ static int reader_u32(Reader *r, uint32_t *value)
     return 1;
 }
 
-/* 读取变长整数并确认当前进程的 size_t 能够表示它。 */
+/* 读取变长整数；调试版检查它能否由 size_t 表示，发布版按有效归档转换。 */
 static int reader_size(Reader *r, size_t *value)
 {
     uint64_t n = reader_number(r);
+#ifdef LZMA_C_API_DEBUG
     if (r->failed || n > (uint64_t)SIZE_MAX) {
         r->failed = 1;
         return 0;
     }
+#endif
     *value = (size_t)n;
     return 1;
 }
@@ -133,7 +137,11 @@ static int read_digest_vector(Reader *r, size_t count,
                               int *defined, uint32_t *crc)
 {
     uint8_t all = reader_byte(r);
+#ifdef LZMA_C_API_DEBUG
     if (r->failed || all > 1) return 0;
+#else
+    if (all > 1) return 0;
+#endif
     *defined = 0;
     if (count != 1) return 0;
     if (all) {
@@ -144,7 +152,11 @@ static int read_digest_vector(Reader *r, size_t count,
         *defined = 1;
         return reader_u32(r, crc);
     }
+#ifdef LZMA_C_API_DEBUG
     return !r->failed;
+#else
+    return 1;
+#endif
 }
 
 /*
@@ -172,7 +184,11 @@ static int parse_streams(Reader *r, Folder *f)
         reader_byte(r) != 1) return 0;
 
     coder_flags = reader_byte(r);
-    if (r->failed || (coder_flags & 0xD0) || (coder_flags & 0x0F) != 3 ||
+    if (
+#ifdef LZMA_C_API_DEBUG
+        r->failed ||
+#endif
+        (coder_flags & 0xD0) || (coder_flags & 0x0F) != 3 ||
         !(coder_flags & 0x20)) return 0;
     if (!reader_take(r, 3, &p) || p[0] != 3 || p[1] != 1 || p[2] != 1 ||
         !reader_size(r, &props_size) || props_size != sizeof(f->properties) ||
@@ -215,26 +231,35 @@ static int parse_streams(Reader *r, Folder *f)
         f->stream_crc_defined = 1;
         f->stream_crc = f->folder_crc;
     }
-    if (tag != 0 || pack_pos > SIZE_MAX - SEVENZIP_START_SIZE) return 0;
+    if (tag != 0) return 0;
+#ifdef LZMA_C_API_DEBUG
+    if (pack_pos > SIZE_MAX - SEVENZIP_START_SIZE) return 0;
+#endif
     f->packed_offset = SEVENZIP_START_SIZE + pack_pos;
     return !r->failed;
 }
 
-/* 将 LZMA1 属性字节拆成核心需要的 lc、lp、pb，并拒绝越界组合。 */
+/* 将 LZMA1 属性字节拆成核心需要的 lc、lp、pb；仅调试版拒绝非法组合。 */
 static int decode_properties(const uint8_t *props, unsigned *lc,
                              unsigned *lp, unsigned *pb)
 {
     unsigned value = props[0];
+#ifdef LZMA_C_API_DEBUG
     if (value >= 225) return 0;
+#endif
     *lc = value % 9;
     *lp = (value / 9) % 5;
     *pb = value / 45;
+#ifdef LZMA_C_API_DEBUG
     return *lc <= 8 && *lp <= 4 && *lc + *lp <= 12 && *pb <= 4;
+#else
+    return 1;
+#endif
 }
 
 /*
  * 解压一个已解析的 folder。workspace 按当前 LZMA 核心的概率表布局临时分配；
- * 先限制压缩区间处于数据区内，再调用已有 C API。解压 CRC 只在调试版校验。
+ * 调试版先限制压缩区间与输出容量，再调用已有 C API。发布版由调用方保证边界。
  */
 static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
                                     size_t packed_limit, const Folder *f, uint8_t *output,
@@ -245,19 +270,23 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
     void *workspace;
     LzmaCApiResult rc;
     size_t decoded_size = 0;
+#ifdef LZMA_C_API_DEBUG
     if (f->packed_offset > packed_limit ||
         f->packed_size > packed_limit - f->packed_offset ||
         f->packed_offset > archive_size ||
         f->packed_size > archive_size - f->packed_offset ||
         f->packed_size < 5 || f->unpacked_size > SEVENZIP_MAX_DECODED)
         return SEVENZIP_INVALID_ARCHIVE;
-#ifdef LZMA_C_API_DEBUG
     if (f->packed_crc_defined &&
         crc32_bytes(archive + f->packed_offset, f->packed_size) != f->packed_crc)
         return SEVENZIP_CRC_ERROR;
-#endif
     if (f->unpacked_size > output_capacity || (f->unpacked_size && !output))
         return SEVENZIP_OUTPUT_TOO_SMALL;
+#else
+    (void)archive_size;
+    (void)packed_limit;
+    (void)output_capacity;
+#endif
     if (!decode_properties(f->properties, &lc, &lp, &pb)) return SEVENZIP_UNSUPPORTED;
     workspace_size = (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
     workspace = malloc(workspace_size);
@@ -283,7 +312,7 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
 
 /*
  * 解析普通 Header，仅接受一个有数据流的文件。文件名和时间等非必要元数据
- * 按长度跳过；文件大小（若给出）和 CRC 字段则读取并保存。
+ * 按长度跳过；文件大小（若给出）和 CRC 字段按单文件布局读取。
  */
 static SevenZipResult parse_header(const uint8_t *data, size_t size,
                                    Folder *data_folder)
@@ -347,15 +376,17 @@ static SevenZipResult parse_header(const uint8_t *data, size_t size,
             }
         }
     }
-    if (reader_byte(&r) != 0 || r.failed || r.pos != r.size ||
-        empty_stream || anti_item || !streams_seen)
+    if (reader_byte(&r) != 0 || empty_stream || anti_item || !streams_seen)
         return SEVENZIP_UNSUPPORTED;
+#ifdef LZMA_C_API_DEBUG
+    if (r.failed || r.pos != r.size) return SEVENZIP_UNSUPPORTED;
+#endif
     return SEVENZIP_OK;
 }
 
 /*
- * 对外入口：验证固定签名头，定位普通/压缩 Header，解析唯一文件的 LZMA1
- * folder 并写入调用方缓冲区。调试宏控制签名字节和各层 CRC 的实际校验。
+ * 对外入口：定位普通 Header，解析唯一文件的 LZMA1 folder 并写入调用方缓冲区。
+ * 调试宏控制签名、CRC、归档长度和输出容量的检查；发布版要求调用方保证有效。
  */
 SevenZipResult sevenzip_extract_single_lzma1(
     const uint8_t *archive, size_t archive_size,
@@ -369,14 +400,20 @@ SevenZipResult sevenzip_extract_single_lzma1(
     uint64_t offset64, size64;
     const uint8_t *next_header;
     Folder folder;
-    SevenZipResult result;
-    uint8_t *decoded_header = NULL;
-    size_t decoded_header_size = 0;
 
+#ifdef LZMA_C_API_DEBUG
     if (!archive || !output_size) return SEVENZIP_INVALID_ARGUMENT;
+#else
+    (void)archive_size;
+    (void)output_capacity;
+#endif
     *output_size = 0;
+#ifdef LZMA_C_API_DEBUG
     if (archive_size < SEVENZIP_START_SIZE || archive[6] != 0)
         return SEVENZIP_INVALID_ARCHIVE;
+#else
+    if (archive[6] != 0) return SEVENZIP_INVALID_ARCHIVE;
+#endif
 #ifdef LZMA_C_API_DEBUG
     if (memcmp(archive, signature, sizeof(signature)) != 0)
         return SEVENZIP_INVALID_ARCHIVE;
@@ -385,12 +422,16 @@ SevenZipResult sevenzip_extract_single_lzma1(
 #endif
     offset64 = read_u64le(archive + 12);
     size64 = read_u64le(archive + 20);
+#ifdef LZMA_C_API_DEBUG
     if (offset64 > SIZE_MAX - SEVENZIP_START_SIZE || size64 > SIZE_MAX)
         return SEVENZIP_INVALID_ARCHIVE;
+#endif
     next_offset = SEVENZIP_START_SIZE + (size_t)offset64;
     next_size = (size_t)size64;
+#ifdef LZMA_C_API_DEBUG
     if (next_offset > archive_size || next_size > archive_size - next_offset)
         return SEVENZIP_INVALID_ARCHIVE;
+#endif
     next_header = archive + next_offset;
 #ifdef LZMA_C_API_DEBUG
     if (crc32_bytes(next_header, next_size) != read_u32le(archive + 28))
@@ -398,27 +439,8 @@ SevenZipResult sevenzip_extract_single_lzma1(
 #endif
 
     memset(&folder, 0, sizeof(folder));
-    if (next_size && next_header[0] == 23) {
-        Reader r = { next_header, next_size, 1, 0 };
-        Folder encoded;
-        memset(&encoded, 0, sizeof(encoded));
-        if (!parse_streams(&r, &encoded) || r.pos != r.size)
-            return SEVENZIP_UNSUPPORTED;
-        if (encoded.unpacked_size > SEVENZIP_MAX_DECODED)
-            return SEVENZIP_INVALID_ARCHIVE;
-        decoded_header = (uint8_t *)malloc(encoded.unpacked_size ? encoded.unpacked_size : 1);
-        if (!decoded_header) return SEVENZIP_MEMORY_ERROR;
-        result = decode_folder(archive, archive_size, next_offset, &encoded, decoded_header,
-                               encoded.unpacked_size, &decoded_header_size);
-        if (result != SEVENZIP_OK) {
-            free(decoded_header);
-            return result;
-        }
-        result = parse_header(decoded_header, decoded_header_size, &folder);
-        free(decoded_header);
-        if (result != SEVENZIP_OK) return result;
-    } else {
-        result = parse_header(next_header, next_size, &folder);
+    {
+        SevenZipResult result = parse_header(next_header, next_size, &folder);
         if (result != SEVENZIP_OK) return result;
     }
     return decode_folder(archive, archive_size, next_offset, &folder, output,
