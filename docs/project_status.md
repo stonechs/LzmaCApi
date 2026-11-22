@@ -4,20 +4,19 @@ Updated: 2026-11-22
 
 ## Current state
 
-- V0.5 builds the C API and decoder as one static library:
+- V0.5.1 builds the C API and decoder as one static library:
   `build/lzmacapi_x86.lib` and `build/lzmacapi_x86_debug.lib`.
-- The public C API signature is unchanged. C calls the assembly decoder with
-  `src+5`, `dst`, `workspace`, `dst_end`, `lc`, and `lp` as ordinary cdecl stack
-  arguments. The decoder reads and updates the pointer argument slots directly.
-- The assembly preparation entry now only patches the `pb`, `lp`, and `lc`
-  immediates. The decoder reads the initial range `Code` from `range_src-4` and
-  computes `2048 + (768 << (lc + lp))` at workspace initialization; neither value
-  is routed through a patched immediate.
-- C has no patch offsets or patch table. It uses only the assembly section bounds
-  to temporarily change page permissions and flush the instruction cache. The
-  section is restored to its original protection before decoding.
-- Since each call mutates shared static instructions, concurrent API calls are
-  unsupported. This is an intentional prototype tradeoff.
+- The public C API signature is unchanged. C passes `src`, `dst`, `workspace`,
+  `dst_end`, `workspace_size`, and `lc/lp/pb` to the decoder as cdecl stack args.
+  The decoder advances `src` by five bytes itself.
+- The decoder computes the `pb` and `lp` masks once into stack locals, uses `lc`
+  as a variable shift count, and uses `workspace_size/2` as the probability
+  initialization count. It reads the initial range `Code` from `src[1..4]`.
+- Release C code ignores `dst_size`; the assembly entry does not return an end
+  pointer. Debug builds still set `dst_size` and validate the decoded length.
+- The assembly code is read-only during decoding. C no longer changes page
+  permissions or flushes the instruction cache; calls can run concurrently when
+  their input, output, and workspace buffers do not overlap.
 - `SRC/lzma_static_x86.asm` now has detailed Chinese comments for the C/assembly
   interface, stack layout, range decoder, LZMA symbol paths, output copy, and exit.
 - Parameter validation, output-boundary checks, workspace checks, and decoded
@@ -30,29 +29,36 @@ Updated: 2026-11-22
   debug-only. V0.3 removed C-side runtime patch metadata. V0.4 links the decoder
   as a separate NASM COFF section and moves parameter patching into assembly.
   The V0.4 source/build snapshot is under ignored `dist/V0.4/`.
-- V0.5 passes decoder arguments directly on the cdecl stack, initializes `Code`
-  and the probability count in the decoder, and limits preparation to patching
-  property immediates. Its snapshot is under ignored `dist/V0.5/`.
+- V0.5 passes decoder arguments directly on the cdecl stack and initializes
+  `Code` and the probability count in the decoder. V0.5.1 passes the caller's
+  `workspace_size` directly to assembly, has assembly advance `src`, and removes
+  release `dst_size` reporting. Its snapshot is under ignored
+  `dist/V0.5.1_workspace-size-arg/`; the V0.5 snapshot remains under
+  `dist/V0.5/`.
 
 ## Verification
 
 - Built with Clang 23.1.5 (`clang-cl`, i686 Windows target, `/O1`), NASM 3.01,
   LLD, and the installed Windows SDK/MSVC-compatible runtime.
-- `script/build.ps1` passed three byte-for-byte API decode cases for `(lc, lp,
-  pb)` values `(0,0,0)`, `(3,0,2)`, and `(2,2,4)`. Debug argument and workspace
-  checks passed; the release smoke test decoded and compared 86,192 bytes.
-- `dumpbin` measured C object `.text` sizes of 211 bytes release and 422 bytes
-  debug. The assembly `.lzma` section is 567 bytes release and 580 bytes debug;
-  the static libraries are 4,300 and 4,556 bytes. These are object/section and
-  archive sizes, not final executable size deltas.
-- The assembly section is linked with execute/read flags. The wrapper's
-  `VirtualProtect` and `FlushInstructionCache` path was exercised by the tests.
+- `script/build.ps1` passed the base API tests and release smoke test. The current
+  revision also passed all 235 byte-comparison stress cases in both release and
+  debug builds: all API-accepted property tuples and ten long cases up to 1 MiB.
+- `dumpbin` measured `lzma_c_api_decode` `.text` at 47 bytes release and 235 bytes
+  debug. The assembly `.lzma` section is 534/550 bytes; static libraries are
+  3,130/3,346 bytes. These are object/section and archive sizes, not final EXE
+  size deltas.
+- An earlier runtime-property build on an Intel N100 was compared with the
+  7-Zip 26.04 x86 CLI using the same LZMA1 streams. It measured 903 vs 757 MiB/s
+  on 128 MiB repeated data and 9.16 vs 12.78 MiB/s on 16 MiB random data. Those
+  figures predate the current `workspace_size` and release `dst_size` changes;
+  the CLI result includes process/archive overhead and writes to NUL.
 - Test builds still emit MSVC-compatible `fopen` deprecation warnings.
 
 ## Remaining limits
 
 - x86 Windows only. Input must be trusted and complete; compressed source bounds
   are not checked by the decoder core.
-- The prototype is not thread-safe because it patches a shared static code
-  section for each call.
+- Concurrent calls are supported when each call uses non-overlapping input,
+  output, and workspace buffers.
 - `dist/V0.3/` remains the preserved V0.3 snapshot and was not modified.
+- The preserved V0.5 baseline remains unchanged.
