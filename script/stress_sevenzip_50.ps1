@@ -8,21 +8,32 @@ $sevenZip = @(
     (Join-Path ${env:ProgramFiles(x86)} '7-Zip\7z.exe')
 ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $sevenZip) { throw '7z.exe not found.' }
-if (-not (Test-Path (Join-Path $build 'lzmacapi_x86.lib'))) {
-    throw 'Run .\script\build.ps1 before this stress test.'
-}
+& (Join-Path $PSScriptRoot 'build_fast.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Fast LZMA1 library build failed.' }
 
 $runRoot = Join-Path $work ('stress_sevenzip_50_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff'))
-New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
-$releaseExe = Join-Path $runRoot 'sevenzip_release.exe'
-$debugExe = Join-Path $runRoot 'sevenzip_debug.exe'
+$revision = git tag --points-at HEAD | Select-Object -First 1
+if (-not $revision) { $revision = git rev-parse --short HEAD }
+$buildStamp = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
+$buildId = [guid]::NewGuid().ToString('N').Substring(0, 8)
+$artifactDir = Join-Path $root "dist\builds\${revision}_stress50_${buildStamp}_${buildId}"
+New-Item -ItemType Directory -Force -Path $runRoot, $artifactDir | Out-Null
+@(
+    "Revision: $revision"
+    "Built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff K')"
+    'Target: i686-pc-windows-msvc'
+    'Compiler flags: clang-cl /O1; NASM -O9'
+    "Executables and linker maps: $artifactDir"
+) | Set-Content -Encoding ascii (Join-Path $artifactDir 'build_info.txt')
+$releaseExe = Join-Path $artifactDir 'sevenzip_fast_lzma1_stress_release.exe'
+$debugExe = Join-Path $artifactDir 'sevenzip_fast_lzma1_stress_debug.exe'
 & $clang --target=i686-pc-windows-msvc /nologo /O1 /TC `
-    (Join-Path $root 'SRC\sevenzip_test.c') `
-    (Join-Path $build 'lzmacapi_x86.lib') "/Fe:$releaseExe" /link /subsystem:console
+    (Join-Path $root 'SRC\sevenzip_fast_test.c') `
+    (Join-Path $build 'lzmacapi_x86_fast.lib') "/Fe:$releaseExe" /link /subsystem:console "/MAP:$(Join-Path $artifactDir 'sevenzip_fast_lzma1_stress_release.map')"
 if ($LASTEXITCODE -ne 0) { throw 'Could not build the release stress tester.' }
 & $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /TC `
-    (Join-Path $root 'SRC\sevenzip_test.c') `
-    (Join-Path $build 'lzmacapi_x86_debug.lib') "/Fe:$debugExe" /link /subsystem:console
+    (Join-Path $root 'SRC\sevenzip_fast_test.c') `
+    (Join-Path $build 'lzmacapi_x86_fast_debug.lib') "/Fe:$debugExe" /link /subsystem:console "/MAP:$(Join-Path $artifactDir 'sevenzip_fast_lzma1_stress_debug.map')"
 if ($LASTEXITCODE -ne 0) { throw 'Could not build the debug stress tester.' }
 
 function New-StressBytes([int]$caseIndex, [int]$length) {

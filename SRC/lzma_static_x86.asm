@@ -29,30 +29,21 @@ section .lzma code align=16
 global _lzma_static_x86_run
 
 ; -----------------------------------------------------------------------------
-; 解码入口：cdecl run(src, dst, workspace, output_size, workspace_size, lc, lp, pb)
+; 统一解码入口：cdecl run(src, dst, context, output_size, lc, lp, pb)
 ; 保存三个非易失寄存器并建立 EBP 帧后，参数槽为：
 ;   [EBP+20] src         原始 range stream 地址；入口将其推进 5 字节
 ;   [EBP+24] dst         当前输出指针（解码过程中递增）
-;   [EBP+28] workspace   概率表工作区
+;   [EBP+28] context     状态结构地址；入口将此参数槽改成概率表地址供核心使用
 ;   [EBP+32] output_size 输入输出槽：先是目标长度，入口加 dst 后覆盖为停止地址
-;   [EBP+36] workspace_size 工作区容量（字节）；每两个字节初始化一个概率项
-;   [EBP+40] lc          字面量上下文属性
-;   [EBP+44] lp          字面量位置属性
-;   [EBP+48] pb          位置状态属性
-; 输入/输出/工作区指针直接使用 C 调用时的参数槽，不再复制到自定义栈槽。
-_lzma_static_x86_run:
-	; 保存解码核心会改写的非易失寄存器，满足 Windows x86 调用约定。
-	push	edi
-	push	esi
-	push	ebx
+;   [EBP+36] lc          字面量上下文属性
+;   [EBP+40] lp          字面量位置属性
+;   [EBP+44] pb          位置状态属性
+; context 固定布局：state、rep0..rep3、previous 共 24 字节，概率表紧随其后。
+; 输入、输出和 context 指针直接使用 C 调用时的参数槽，不复制到自定义槽。
 ; LOC 宏以 EBP 为基准向负偏移分配 4 字节工作变量。核心栈帧变量布局：
-;   [EBP-4]  PbMask     (1 << pb) - 1
-;   [EBP-8]  LpMask     (1 << lp) - 1
-;   [EBP-12] Code       range decoder 当前编码值
-;   [EBP-16] Range      range decoder 当前区间宽度
-;   [EBP-20..-32] _rep0.._rep3 最近使用的四个匹配距离
-;   [EBP-36] _state     LZMA 状态机状态
-; 这些变量在当前调用的栈上；workspace 另存概率模型表。LOC 的可选参数
+;   [EBP-4] context 指针
+;   后续槽依次保存 PbMask、LpMask、Code、Range、rep0..rep3 和 LZMA state。
+; 这些变量在当前调用的栈上；context 连续保存初始状态和概率模型表。LOC 的可选参数
 ; 可指定变量占用字节数及访问类型，也可用 none 省略显式类型；本文件使用
 ; 默认的 4 字节 dword 变量和 EBP 基址。
 %assign loc_pos 0
@@ -64,8 +55,10 @@ _lzma_static_x86_run:
 %xdefine %1 %3 [ebp-loc_pos]
 %endif
 %endmacro
+LOC _context
 LOC PbMask
 LOC LpMask
+%assign loc_lp loc_pos
 LOC Code
 %assign loc_code loc_pos
 LOC Range
@@ -79,7 +72,7 @@ LOC _state
 
 ; 解码过程中 EDI 保持 _rc_bit1 的入口地址，CALL _rc_bit 等价于 CALL EDI。
 %define _rc_bit edi
-; C 传入的指针参数槽直接作为工作变量。Temp 指向 workspace；Dest 是会随输出
+; C 传入的指针参数槽直接作为工作变量。Temp 指向 context 后面的概率表；Dest 是会随输出
 ; 递增的当前写入指针；Src 是会随 range normalization 前进的输入指针；
 ; DestEnd 槽由入口将 output_size 加到 dst 上得到。后面直接读写参数槽更新 Src、Dest。
 %define Src dword [ebp+20]
@@ -87,23 +80,29 @@ LOC _state
 %define Temp dword [ebp+28]
 %define DestEnd dword [ebp+32]
 
-; 建立解码入口的 EBP 栈帧。栈上保存两个属性掩码、Code、Range、四个 rep
-; 距离及状态槽；Code 从 src+1 读取。概率表项数由传入的 workspace_size 换算，
-; 概率模型表位于 C 传入的 workspace。
-; 每个 uint16_t 概率项初始化为 1024（0x400），即自适应概率的中间值。
+; 所有路径共用此入口；概率表由调用方的 C 层初始化。
+_lzma_static_x86_run:
+	push	edi
+	push	esi
+	push	ebx
+	enter	0, 0
+_start:
+	mov	eax, [ebp+28]
+	push	eax		; 暂存 context 指针，随后读取 C 初始化的 LZMA 状态。
+	lea	eax, [eax+24]
+	mov	[ebp+28], eax	; 复用参数槽，Temp 从此直接指向概率表。
 
-_start:	enter	0, 0
 	; 将 C 传入的 output_size 转成目标末地址，并覆盖原参数槽，供解码循环比较。
 	mov	eax, [ebp+24]
 	add	[ebp+32], eax
 	; 位置状态掩码 pb_mask=(1<<pb)-1，后续每轮循环直接从局部变量读取。
-	mov	ecx, [ebp+48]
+	mov	ecx, [ebp+44]
 	mov	eax, 1
 	shl	eax, cl
 	dec	eax
 	push	eax
 	; 字面量位置掩码 lp_mask=(1<<lp)-1，同样只计算一次。
-	mov	ecx, [ebp+44]
+	mov	ecx, [ebp+40]
 	mov	eax, 1
 	shl	eax, cl
 	dec	eax
@@ -116,24 +115,14 @@ _start:	enter	0, 0
 	bswap	eax
 	push	eax		; Code 初值。
 	push	-1		; Range 初值为 0xFFFFFFFF。
-	xor	eax, eax
-	inc	eax
-	; 每个距离槽以 1 开始；这里保存的是“实际距离 + 1”的编码形式，
-	; 因而代表初始实际距离 0。
-	push	eax
-	push	eax
-	push	eax
-	push	eax
-	; workspace_size 是调用方传入的字节数；每个概率项占 2 字节，因此右移
-	; 一位得到 REP STOSW 的项数。调用方应按当前概率表布局公式分配工作区。
-	mov	ecx, [ebp+36]
-	shr	ecx, 1
-	mov	edi, Temp
-	shl	eax, 10
-	rep	stosw
-	push	ecx		; REP STOSW 后 ECX=0，初始 LZMA state 为 0。
-	; BH 的初值在后续位运算前会被覆盖，因此这里取 4 不影响解码结果。
-	xchg	ebx, eax	; BL=0 作为初始前一字节；BH 的值不参与有效上下文。
+	; C 在统一 context 前缀中初始化状态和四个 rep 距离；加载到栈上供核心工作。
+	mov	eax, _context
+	push	dword [eax+4]	; rep0。
+	push	dword [eax+8]	; rep1。
+	push	dword [eax+12]	; rep2。
+	push	dword [eax+16]	; rep3。
+	push	dword [eax]	; LZMA state。
+	mov	ebx, [eax+20]	; 上一输出字节。
 	call	_loop1
 
 	; 用 CALL/POP 技巧取得 _rc_bit1 的运行时地址并保存到 EDI；解码主体
@@ -187,7 +176,7 @@ _loop:	mov	eax, Dest
 	; ECX 暂存当前输出位置。BH 与 LpMask 计算字面量位置上下文；ECX 与
 	; PbMask 相与得到 posState。
 	mov	ecx, Dest
-	mov	bh, [ebp-8]
+	mov	bh, byte [ebp-loc_lp]
 	pop	esi		; _state
 	push	esi
 	and	bh, cl
@@ -203,7 +192,7 @@ _loop:	mov	eax, Dest
 	jc	_case_rep
 	; 字面量路径。lc 决定字面量上下文中前一个字节的位移量；从 C 参数槽
 	; 读取 lc 放入 CL，执行变量移位。后续根据历史字节和已解出的高位选概率项。
-	mov	ecx, [ebp+40]
+	mov	ecx, [ebp+36]
 	shl	ebx, cl
 	mov	bl, 0
 	lea	ecx, [ebx+ebx*2+2048]
@@ -409,7 +398,6 @@ _copy:	pop	edx
 	; end marker、达到 dst_end 或调试版发现匹配越界都会到这里。先保存当前
 	; 输出末地址作为返回值，再丢弃局部变量帧并恢复非易失寄存器；cdecl 调用者清栈。
 _end:
-
 %ifdef LZMA_C_API_DEBUG
 	mov	eax, Dest
 %endif
