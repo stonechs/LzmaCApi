@@ -7,16 +7,6 @@
 #define SEVENZIP_MAX_DECODED 0x01000000u
 #define LZMA1_MAX_PROB_COUNT (2048u + (768u << 12))
 
-#ifdef LZMA_C_API_DEBUG
-extern uint8_t *__cdecl lzma_static_x86_run(
-    const uint8_t *src, uint8_t *dst, void *workspace,
-    size_t output_size, unsigned lc, unsigned lp, unsigned pb);
-#else
-extern void __cdecl lzma_static_x86_run(
-    const uint8_t *src, uint8_t *dst, void *workspace,
-    size_t output_size, unsigned lc, unsigned lp, unsigned pb);
-#endif
-
 typedef struct FastFolder {
     size_t packed_offset;
     size_t packed_size;
