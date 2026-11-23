@@ -20,6 +20,12 @@ Updated: 2026-11-22
   `fopen` 弃用警告。map/exe 位于 `dist/builds/V0.6.6_20261122_221951_980_886befdc/`
   和 `dist/builds/V0.6.6_fast_lzma2_20261122_221958_904_d38026a1/`。快照：
   `dist/V0.6.7_lzma2_state_writeback_only/`。
+- **LZMA2 测试集验证（2026-11-22，基于 V0.6.7 工作树）**：`forTest/` 中 74 个归档均由 7-Zip 识别为 LZMA2，
+  本地 fast LZMA2 release/debug 解码均为 74/74 通过，输出与 7-Zip 提取文件逐字节一致。逐个解析 LZMA2
+  packed stream 后，74/74 均找到结束标记且解析位置到达 packed stream 末尾；没有未压缩块。分块数为：
+  51 个单块、15 个双块、7 个三块、1 个四块，因此 23 个归档包含多个压缩块。结果见
+  `work/lzma2_forTest_20261122_222945_299/results.csv` 和
+  `work/lzma2_forTest_20261122_222945_299/lzma2_chunks_verified.csv`。
 - **V0.6.6（代码提交 `a128f03ee37c4724cf60fb1fd58502f329b9a668`；fast 7z 解析代码中文注释）**：为 `sevenzip_single_fast.c` 补充中文说明，覆盖
   简化 UINT64 读取器、LZMA 属性拆分、LZMA2 控制字节/重置状态、context/workspace
   初始化、固定布局解析和发布版限制；并说明不支持 EncodedHeader（压缩 Header），
