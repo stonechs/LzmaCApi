@@ -407,7 +407,9 @@ _copy:	pop	edx
 	; end marker、达到 dst_end 或调试版发现匹配越界都会到这里。先保存当前
 	; 输出末地址作为返回值，再丢弃局部变量帧并恢复非易失寄存器；cdecl 调用者清栈。
 _end:
-	; 所有模式都把状态写回同一 context，供调用方重置或下一 LZMA2 块续解。
+	; LZMA2 的下一块可能续用当前 LZMA 状态和重复距离，因此写回 context。
+	; 普通 LZMA1 每次从初始 context 解完整条流，不需要保留这些状态。
+	%ifdef LZMA_C_API_LZMA2
 	mov	eax, _context
 	mov	ecx, _state
 	mov	[eax], ecx
@@ -420,6 +422,7 @@ _end:
 	mov	ecx, _rep3
 	mov	[eax+16], ecx
 	mov	[eax+20], bl
+	%endif
 
 %ifdef LZMA_C_API_DEBUG
 	mov	eax, Dest
