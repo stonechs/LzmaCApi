@@ -13,6 +13,22 @@ Updated: 2026-11-22
 
 ## Current state
 
+- **V0.6.4（代码提交 `f147d1304a2246535b7cd67c10a8011f0284eb37`）**：普通
+  LZMA1 和 `LZMA_C_API_LZMA2` 构建统一使用 28 字节 `LzmaX86Context` 前缀，
+  后接概率表；C 初始化概率表并重置状态，汇编从同一 context 读取/写回状态。
+  raw API、完整 LZMA1 容器和 fast 路径共用 7 参数 cdecl 汇编入口
+  `run(src, dst, context, output_size, lc, lp, pb)`，汇编不再接收 workspace 容量或
+  LZMA2 独立状态指针。公开 workspace 需求增加 `LZMA_C_API_CONTEXT_SIZE`（28 字节），
+  且需 4 字节对齐。Clang i686 构建、3 组 raw API、普通 7z、`forTest/` 12 个归档、
+  压力集 50 个归档（release/debug）、LZMA2 宏下 raw API 与 4 类归档（release/debug）
+  均通过；另单独确认 fast release LZMA1 解码一次且输出匹配。构建只出现已有测试程序
+  `fopen` 弃用警告。map/exe 位于 `dist/builds/V0.6.3_20261122_212513_927_77871f39/`、
+  `V0.6.3_sevenzip_20261122_212519_136_e3f7d274/`、
+  `V0.6.3_forTest_20261122_212523_825_6486daa8/`、
+  `V0.6.3_stress50_20261122_212528_520_efca388c/`、
+  `V0.6.3_fast_lzma2_20261122_212535_915_371c6334/` 和
+  `V0.6.3_fast_lzma1_20261122_212609_601_12fd3612/`。快照：
+  `dist/V0.6.4_unified_context/`。
 - **V0.6.3（提交 `e8d7e3b3564c850e5a5978966fc6a97b36f74774`）**：概率表初始化统一由 C 完成，覆盖 raw C API、完整
   LZMA1 容器路径和 fast 路径；它们共用 `lzma_static_x86_run` 汇编入口。宏
   `LZMA_C_API_LZMA2` 仅为 fast 路径编译 LZMA2 coder/分块控制，并在概率表后
