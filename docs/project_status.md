@@ -13,7 +13,7 @@ Updated: 2026-11-22
 
 ## Current state
 
-- **V0.6.3（待本地提交）**：概率表初始化统一由 C 完成，覆盖 raw C API、完整
+- **V0.6.3（提交 `e8d7e3b3564c850e5a5978966fc6a97b36f74774`）**：概率表初始化统一由 C 完成，覆盖 raw C API、完整
   LZMA1 容器路径和 fast 路径；它们共用 `lzma_static_x86_run` 汇编入口。宏
   `LZMA_C_API_LZMA2` 仅为 fast 路径编译 LZMA2 coder/分块控制，并在概率表后
   分配 C 管理的持久状态区；默认构建仍是 LZMA1 fast 路径，完整容器解析器仍
