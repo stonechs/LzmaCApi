@@ -34,13 +34,13 @@ if ($LASTEXITCODE -ne 0) { throw 'NASM fast release assembly failed' }
 nasm -f win32 -O9 -D LZMA_C_API_DEBUG=1 $asm -o $debugAsmObj
 if ($LASTEXITCODE -ne 0) { throw 'NASM fast debug assembly failed' }
 
-& $clang --target=i686-pc-windows-msvc /nologo /O1 /c /TC `
+& $clang --target=i686-pc-windows-msvc /nologo /clang:-Oz /c /TC `
     (Join-Path $src 'sevenzip_single_fast.c') "/Fo$releaseFastObj"
 if ($LASTEXITCODE -ne 0) { throw 'Clang fast release parser compilation failed' }
 & $linker /lib "/OUT:$releaseLib" $releaseFastObj $releaseAsmObj
 if ($LASTEXITCODE -ne 0) { throw 'Fast release static library creation failed' }
 
-& $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /c /TC `
+& $clang --target=i686-pc-windows-msvc /nologo /clang:-Oz /DLZMA_C_API_DEBUG /c /TC `
     (Join-Path $src 'sevenzip_single_fast.c') "/Fo$debugFastObj"
 if ($LASTEXITCODE -ne 0) { throw 'Clang fast debug parser compilation failed' }
 & $linker /lib "/OUT:$debugLib" $debugFastObj $debugAsmObj

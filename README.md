@@ -1,6 +1,6 @@
 # LzmaCApi Fast LZMA1
 
-V1.0.1 开发线只保留快速 7z 入口和静态 x86 LZMA1 解码核心。它适合调用方能保证输入满足固定布局、希望减小集成体积的场景。
+V1.0.3 只保留快速 7z 入口和静态 x86 LZMA1 解码核心，并使用 Clang `-Oz` 优先压低代码体积。它适合调用方能保证输入满足固定布局、希望减小集成体积的场景。
 
 ## 目录
 
@@ -42,4 +42,4 @@ run(src, dst, workspace, output_size, lc, lp, pb);
 
 ## 当前版本
 
-V1.0 是从 V0.6.2 继续的 LZMA1-only 基线。V1.0.1 移除了普通解析器和 raw C API 路径；V1.0.2 固定分配最大概率表 workspace，并由汇编 `rep stosw` 初始化表项和栈上解码状态。构建和回归状态见 [`docs/project_status.md`](docs/project_status.md)。
+V1.0 是从 V0.6.2 继续的 LZMA1-only 基线。V1.0.1 移除了普通解析器和 raw C API 路径；V1.0.2 固定分配最大概率表 workspace，并由汇编 `rep stosw` 初始化表项和栈上解码状态；V1.0.3 将 C 构建优化切换为 Clang `-Oz`，以最小代码体积为目标。构建和回归状态见 [`docs/project_status.md`](docs/project_status.md)。

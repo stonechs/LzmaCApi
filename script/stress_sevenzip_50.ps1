@@ -22,16 +22,16 @@ New-Item -ItemType Directory -Force -Path $runRoot, $artifactDir | Out-Null
     "Revision: $revision"
     "Built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff K')"
     'Target: i686-pc-windows-msvc'
-    'Compiler flags: clang-cl /O1; NASM -O9'
+    'Compiler flags: clang-cl /clang:-Oz; NASM -O9'
     "Executables and linker maps: $artifactDir"
 ) | Set-Content -Encoding ascii (Join-Path $artifactDir 'build_info.txt')
 $releaseExe = Join-Path $artifactDir 'sevenzip_fast_lzma1_stress_release.exe'
 $debugExe = Join-Path $artifactDir 'sevenzip_fast_lzma1_stress_debug.exe'
-& $clang --target=i686-pc-windows-msvc /nologo /O1 /TC `
+& $clang --target=i686-pc-windows-msvc /nologo /clang:-Oz /TC `
     (Join-Path $root 'SRC\sevenzip_fast_test.c') `
     (Join-Path $build 'lzmacapi_x86_fast.lib') "/Fe:$releaseExe" /link /subsystem:console "/MAP:$(Join-Path $artifactDir 'sevenzip_fast_lzma1_stress_release.map')"
 if ($LASTEXITCODE -ne 0) { throw 'Could not build the release stress tester.' }
-& $clang --target=i686-pc-windows-msvc /nologo /O1 /DLZMA_C_API_DEBUG /TC `
+& $clang --target=i686-pc-windows-msvc /nologo /clang:-Oz /DLZMA_C_API_DEBUG /TC `
     (Join-Path $root 'SRC\sevenzip_fast_test.c') `
     (Join-Path $build 'lzmacapi_x86_fast_debug.lib') "/Fe:$debugExe" /link /subsystem:console "/MAP:$(Join-Path $artifactDir 'sevenzip_fast_lzma1_stress_debug.map')"
 if ($LASTEXITCODE -ne 0) { throw 'Could not build the debug stress tester.' }

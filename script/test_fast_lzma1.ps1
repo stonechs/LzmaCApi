@@ -23,7 +23,7 @@ New-Item -ItemType Directory -Force -Path $artifactDir, $runDir | Out-Null
     "Revision: $revision"
     "Built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff K')"
     'Target: i686-pc-windows-msvc'
-    'Compiler flags: clang-cl /O1; NASM -O9'
+    'Compiler flags: clang-cl /clang:-Oz; NASM -O9'
     "Executables and linker maps: $artifactDir"
 ) | Set-Content -Encoding ascii (Join-Path $artifactDir 'build_info.txt')
 
@@ -45,11 +45,11 @@ $debugExe = Join-Path $artifactDir 'sevenzip_fast_lzma1_debug.exe'
 $releaseMap = Join-Path $artifactDir 'sevenzip_fast_lzma1_release.map'
 $debugMap = Join-Path $artifactDir 'sevenzip_fast_lzma1_debug.map'
 $tester = Join-Path $root 'SRC\sevenzip_fast_test.c'
-& $clang --target=i686-pc-windows-msvc /nologo /O1 /TC $tester `
+& $clang --target=i686-pc-windows-msvc /nologo /clang:-Oz /TC $tester `
     (Join-Path $build 'lzmacapi_x86_fast.lib') "/Fe:$releaseExe" `
     /link /subsystem:console "/MAP:$releaseMap"
 if ($LASTEXITCODE -ne 0) { throw 'Could not link the release fast tester.' }
-& $clang --target=i686-pc-windows-msvc /nologo /O1 /TC $tester `
+& $clang --target=i686-pc-windows-msvc /nologo /clang:-Oz /TC $tester `
     (Join-Path $build 'lzmacapi_x86_fast_debug.lib') "/Fe:$debugExe" `
     /link /subsystem:console "/MAP:$debugMap"
 if ($LASTEXITCODE -ne 0) { throw 'Could not link the debug fast tester.' }
