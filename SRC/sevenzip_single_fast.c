@@ -205,7 +205,6 @@ static SevenZipResult decode_lzma2_stream(
                 return SEVENZIP_DECODE_ERROR;
             if (cursor[0] != 0) return SEVENZIP_DECODE_ERROR;
 #endif
-            probability_count = 2048u + (768u << (lc + lp));
             context->previous = produced > dictionary_base ? output[produced - 1] : 0;
             context->position_bias = (uint32_t)(produced - dictionary_base) -
                                      (uint32_t)(uintptr_t)(output + produced);

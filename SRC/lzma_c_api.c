@@ -40,18 +40,22 @@ LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
     *dst_size = 0;
     if (output_size > dst_capacity || (output_size && !dst))
         return LZMA_C_API_OUTPUT_TOO_SMALL;
-    if (workspace_size < LZMA_C_API_CONTEXT_SIZE +
-                         (2048u + (768u << (lc + lp))) * sizeof(uint16_t))
-        return LZMA_C_API_WORKSPACE_TOO_SMALL;
 #else
     (void)src_size;
     (void)dst_capacity;
     (void)dst_size;
 #endif
 
+    /* 属性通过调试检查后只计算一次，容量校验和概率表初始化共用此值。 */
+    probability_count = 2048u + (768u << (lc + lp));
+#ifdef LZMA_C_API_DEBUG
+    if (workspace_size < LZMA_C_API_CONTEXT_SIZE +
+                         probability_count * sizeof(uint16_t))
+        return LZMA_C_API_WORKSPACE_TOO_SMALL;
+#endif
+
     /* 所有构建共用一个 context：状态在前，C 初始化的概率表在后。 */
     lzma_x86_context_reset(context);
-    probability_count = 2048u + (768u << (lc + lp));
     initialize_probabilities(workspace, probability_count);
 #ifdef LZMA_C_API_LZMA2
     context->position_bias = 0u - (uint32_t)(uintptr_t)dst;
