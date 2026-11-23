@@ -17,7 +17,7 @@ if (-not (Test-Path (Join-Path $build 'lzmacapi_x86.lib'))) {
 
 $runRoot = Join-Path $work ('forTest_decode_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff'))
 $extractRoot = Join-Path $runRoot 'extracted'
-$revision = git describe --tags --exact-match 2>$null
+$revision = git tag --points-at HEAD | Select-Object -First 1
 if (-not $revision) { $revision = git rev-parse --short HEAD }
 $buildStamp = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
 $buildId = [guid]::NewGuid().ToString('N').Substring(0, 8)

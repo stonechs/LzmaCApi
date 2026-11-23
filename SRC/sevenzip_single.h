@@ -38,7 +38,8 @@ SevenZipResult sevenzip_extract_single_lzma1(
  * output_capacity 是调用方提供的可写解压缓冲区和容量；output_size 必须指向
  * 有效的 size_t，成功时接收实际输出长度。此入口不验证指针、归档长度或容量。
  * 仅适用于完整可信的 7z 文件：普通 Header 后紧跟 MainStreamsInfo；一个非空
- * 文件、一个 packed stream、一个 LZMA1 coder，coder ID 为 3 字节且属性为 5 字节。
+ * 文件、一个 packed stream、一个 LZMA coder。默认构建只支持 LZMA1；使用
+ * LZMA_C_API_LZMA2 宏构建时也支持 LZMA2 coder 及其分块流。
  * 不支持 ArchiveProperties、AdditionalStreamsInfo、压缩 Header、加密、滤镜、
  * 多文件、多流或分卷。调用方必须确保输出容量足够，解码输入完整且属性正确。
  * fast-only 静态库的 32 位变长整数读取器要求所有长度和偏移小于 100 MiB，

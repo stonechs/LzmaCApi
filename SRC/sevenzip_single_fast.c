@@ -1,27 +1,51 @@
 #include "sevenzip_single.h"
+#include "lzma_x86_state.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #define SEVENZIP_START_SIZE 32u
 #define SEVENZIP_MAX_DECODED 0x01000000u
+#define FAST_METHOD_LZMA1 1u
+#ifdef LZMA_C_API_LZMA2
+#define FAST_METHOD_LZMA2 2u
+#define LZMA2_MAX_PROB_COUNT (2048u + (768u << 4))
+#endif
 
 #ifdef LZMA_C_API_DEBUG
 extern uint8_t *__cdecl lzma_static_x86_run(
     const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
-    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb);
+    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb
+#ifdef LZMA_C_API_LZMA2
+    , LzmaX86State *state
+#endif
+    );
 #else
 extern void __cdecl lzma_static_x86_run(
     const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
-    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb);
+    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb
+#ifdef LZMA_C_API_LZMA2
+    , LzmaX86State *state
+#endif
+    );
 #endif
 
 typedef struct FastFolder {
     size_t packed_offset;
     size_t packed_size;
     size_t unpacked_size;
+    uint8_t method;
+    uint8_t properties_size;
     uint8_t properties[5];
 } FastFolder;
+
+static void initialize_probabilities(void *workspace, size_t probability_count)
+{
+    uint16_t *probabilities = (uint16_t *)workspace;
+    size_t i;
+    for (i = 0; i < probability_count; ++i)
+        probabilities[i] = 1024;
+}
 
 static uint64_t read_u64le(const uint8_t *p)
 {
@@ -75,6 +99,150 @@ static int decode_properties(const uint8_t *props, unsigned *lc,
 #endif
 }
 
+#ifdef LZMA_C_API_LZMA2
+static uint16_t read_u16be_fast(const uint8_t **cursor)
+{
+    uint16_t value = (uint16_t)((uint16_t)(*cursor)[0] << 8 | (*cursor)[1]);
+    *cursor += 2;
+    return value;
+}
+
+/* LZMA2 控制层：C 管块长度、重置规则和跨块状态，汇编只解压单个压缩块。 */
+static SevenZipResult decode_lzma2_stream(
+    const uint8_t *src, size_t src_size, uint8_t dictionary_property,
+    uint8_t *output, size_t output_size, size_t output_capacity,
+    void *workspace, size_t workspace_size, LzmaX86State *state)
+{
+    const uint8_t *cursor = src;
+    const uint8_t *input_end = src + src_size;
+    size_t produced = 0;
+    size_t dictionary_base = 0;
+    unsigned lc = 0, lp = 0, pb = 0;
+    unsigned need_reset = 0xE0;
+    int properties_ready = 0;
+
+#ifdef LZMA_C_API_DEBUG
+    if (dictionary_property > 40 || output_size > output_capacity ||
+        (output_size && !output))
+        return SEVENZIP_INVALID_ARCHIVE;
+#else
+    (void)output_capacity;
+#endif
+    (void)dictionary_property; /* 字典窗口约束来自有效码流；输出本身就是历史窗口。 */
+    lzma_x86_state_reset(state);
+
+    for (;;) {
+        unsigned control;
+        size_t chunk_output;
+
+#ifdef LZMA_C_API_DEBUG
+        if (cursor >= input_end) return SEVENZIP_DECODE_ERROR;
+#endif
+        control = *cursor++;
+        if (control == 0) break;
+
+        if (control < 0x80) {
+            if (control == 1) {
+                dictionary_base = produced;
+                need_reset = 0xC0;
+            } else if (control == 2) {
+#ifdef LZMA_C_API_DEBUG
+                if (need_reset == 0xE0) return SEVENZIP_DECODE_ERROR;
+#endif
+            } else {
+#ifdef LZMA_C_API_DEBUG
+                return SEVENZIP_DECODE_ERROR;
+#endif
+            }
+#ifdef LZMA_C_API_DEBUG
+            if ((size_t)(input_end - cursor) < 2)
+                return SEVENZIP_DECODE_ERROR;
+#endif
+            chunk_output = (size_t)read_u16be_fast(&cursor) + 1;
+#ifdef LZMA_C_API_DEBUG
+            if (chunk_output > output_size - produced ||
+                (size_t)(input_end - cursor) < chunk_output)
+                return SEVENZIP_DECODE_ERROR;
+#endif
+            memcpy(output + produced, cursor, chunk_output);
+            cursor += chunk_output;
+            produced += chunk_output;
+            continue;
+        }
+
+#ifdef LZMA_C_API_DEBUG
+        if (control < need_reset || (size_t)(input_end - cursor) < 4)
+            return SEVENZIP_DECODE_ERROR;
+#endif
+        need_reset = 0;
+        chunk_output = ((size_t)(control & 0x1Fu) << 16) +
+                       (size_t)read_u16be_fast(&cursor) + 1;
+        {
+            size_t chunk_packed = (size_t)read_u16be_fast(&cursor) + 1;
+            uint8_t property;
+            size_t probability_count, probability_bytes;
+            uint8_t *chunk_end;
+
+            if (control >= 0xC0) {
+#ifdef LZMA_C_API_DEBUG
+                if (cursor >= input_end) return SEVENZIP_DECODE_ERROR;
+#endif
+                property = *cursor++;
+                if (!decode_properties(&property, &lc, &lp, &pb))
+                    return SEVENZIP_UNSUPPORTED;
+#ifdef LZMA_C_API_DEBUG
+                if (lc + lp > 4) return SEVENZIP_UNSUPPORTED;
+#endif
+                properties_ready = 1;
+            }
+            if (control >= 0xE0)
+                dictionary_base = produced;
+            if (control >= 0xA0) {
+#ifdef LZMA_C_API_DEBUG
+                if (!properties_ready) return SEVENZIP_DECODE_ERROR;
+#endif
+                lzma_x86_state_reset(state);
+                properties_ready = 1;
+                probability_count = 2048u + (768u << (lc + lp));
+                initialize_probabilities(workspace, probability_count);
+            }
+#ifdef LZMA_C_API_DEBUG
+            if (!properties_ready || chunk_output > output_size - produced ||
+                chunk_packed > (size_t)(input_end - cursor) || chunk_packed < 5)
+                return SEVENZIP_DECODE_ERROR;
+            if (cursor[0] != 0) return SEVENZIP_DECODE_ERROR;
+#endif
+            probability_count = 2048u + (768u << (lc + lp));
+            probability_bytes = probability_count * sizeof(uint16_t);
+            state->previous = produced > dictionary_base ? output[produced - 1] : 0;
+            state->position_bias = (uint32_t)(produced - dictionary_base) -
+                                   (uint32_t)(uintptr_t)(output + produced);
+#ifdef LZMA_C_API_DEBUG
+            chunk_end = lzma_static_x86_run(
+                cursor, output + produced, workspace, chunk_output,
+                probability_bytes, lc, lp, pb, state);
+            if (chunk_end < output + produced ||
+                (size_t)(chunk_end - (output + produced)) != chunk_output)
+                return SEVENZIP_DECODE_ERROR;
+#else
+            (void)chunk_end;
+            lzma_static_x86_run(
+                cursor, output + produced, workspace, chunk_output,
+                probability_bytes, lc, lp, pb, state);
+#endif
+            cursor += chunk_packed;
+            produced += chunk_output;
+        }
+    }
+
+#ifdef LZMA_C_API_DEBUG
+    if (produced != output_size || cursor != input_end)
+        return SEVENZIP_DECODE_ERROR;
+#endif
+    return produced == output_size ? SEVENZIP_OK : SEVENZIP_DECODE_ERROR;
+}
+#endif
+
 /* fast-only 静态库自己的 folder 解码实现，不依赖完整 7z 解析器。 */
 static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
                                     size_t packed_limit, const FastFolder *folder,
@@ -82,8 +250,11 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
                                     size_t *output_size)
 {
     unsigned lc, lp, pb;
-    size_t workspace_size;
+    size_t workspace_size, allocation_size;
     void *workspace;
+#ifdef LZMA_C_API_LZMA2
+    LzmaX86State *state;
+#endif
 #ifdef LZMA_C_API_DEBUG
     uint8_t *end;
 #endif
@@ -92,7 +263,8 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
         folder->packed_size > packed_limit - folder->packed_offset ||
         folder->packed_offset > archive_size ||
         folder->packed_size > archive_size - folder->packed_offset ||
-        folder->packed_size < 5 || folder->unpacked_size > SEVENZIP_MAX_DECODED)
+        folder->packed_size < (folder->method == FAST_METHOD_LZMA1 ? 5u : 1u) ||
+        folder->unpacked_size > SEVENZIP_MAX_DECODED)
         return SEVENZIP_INVALID_ARCHIVE;
     if (folder->unpacked_size > output_capacity ||
         (folder->unpacked_size && !output))
@@ -102,33 +274,97 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
     (void)packed_limit;
     (void)output_capacity;
 #endif
-    if (!decode_properties(folder->properties, &lc, &lp, &pb))
-        return SEVENZIP_UNSUPPORTED;
-    workspace_size = (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
-    workspace = malloc(workspace_size);
-    if (!workspace) return SEVENZIP_MEMORY_ERROR;
-#ifdef LZMA_C_API_DEBUG
-    if (archive[folder->packed_offset] != 0) {
-        free(workspace);
-        return SEVENZIP_DECODE_ERROR;
-    }
-    end = lzma_static_x86_run(archive + folder->packed_offset, output, workspace,
-                              folder->unpacked_size, workspace_size, lc, lp, pb);
-    free(workspace);
-    if (end < output || (size_t)(end - output) != folder->unpacked_size)
-        return SEVENZIP_DECODE_ERROR;
-#else
-    lzma_static_x86_run(archive + folder->packed_offset, output, workspace,
-                        folder->unpacked_size, workspace_size, lc, lp, pb);
-    free(workspace);
+#ifdef LZMA_C_API_LZMA2
+    if (folder->method == FAST_METHOD_LZMA2) {
+        if (folder->properties_size != 1 || folder->properties[0] > 40)
+            return SEVENZIP_UNSUPPORTED;
+        workspace_size = LZMA2_MAX_PROB_COUNT * sizeof(uint16_t);
+    } else
 #endif
+    {
+        if (!decode_properties(folder->properties, &lc, &lp, &pb))
+            return SEVENZIP_UNSUPPORTED;
+        workspace_size = (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
+    }
+    allocation_size = workspace_size;
+#ifdef LZMA_C_API_LZMA2
+    allocation_size += sizeof(LzmaX86State);
+#endif
+    workspace = malloc(allocation_size);
+    if (!workspace) return SEVENZIP_MEMORY_ERROR;
+#ifdef LZMA_C_API_LZMA2
+    state = (LzmaX86State *)((uint8_t *)workspace + workspace_size);
+    lzma_x86_state_reset(state);
+#endif
+    if (folder->method == FAST_METHOD_LZMA1) {
+        initialize_probabilities(workspace, workspace_size / sizeof(uint16_t));
+#ifdef LZMA_C_API_DEBUG
+        if (archive[folder->packed_offset] != 0) {
+            free(workspace);
+            return SEVENZIP_DECODE_ERROR;
+        }
+#ifdef LZMA_C_API_LZMA2
+        state->position_bias = 0u - (uint32_t)(uintptr_t)output;
+        end = lzma_static_x86_run(
+            archive + folder->packed_offset, output, workspace,
+            folder->unpacked_size, workspace_size, lc, lp, pb
+#ifdef LZMA_C_API_LZMA2
+            , state
+#endif
+            );
+#else
+        end = lzma_static_x86_run(
+            archive + folder->packed_offset, output, workspace,
+            folder->unpacked_size, workspace_size, lc, lp, pb
+#ifdef LZMA_C_API_LZMA2
+            , state
+#endif
+            );
+#endif
+        if (end < output || (size_t)(end - output) != folder->unpacked_size) {
+            free(workspace);
+            return SEVENZIP_DECODE_ERROR;
+        }
+#else
+        #ifdef LZMA_C_API_LZMA2
+        state->position_bias = 0u - (uint32_t)(uintptr_t)output;
+        lzma_static_x86_run(
+            archive + folder->packed_offset, output, workspace,
+            folder->unpacked_size, workspace_size, lc, lp, pb
+#ifdef LZMA_C_API_LZMA2
+            , state
+#endif
+            );
+        #else
+        lzma_static_x86_run(
+            archive + folder->packed_offset, output, workspace,
+            folder->unpacked_size, workspace_size, lc, lp, pb);
+        #endif
+#endif
+    } else {
+#ifdef LZMA_C_API_LZMA2
+        SevenZipResult result = decode_lzma2_stream(
+            archive + folder->packed_offset, folder->packed_size,
+            folder->properties[0], output, folder->unpacked_size,
+            output_capacity, workspace, workspace_size, state);
+        if (result != SEVENZIP_OK) {
+            free(workspace);
+            return result;
+        }
+#else
+        free(workspace);
+        return SEVENZIP_UNSUPPORTED;
+#endif
+    }
+    free(workspace);
     *output_size = folder->unpacked_size;
     return SEVENZIP_OK;
 }
 
 /*
- * 快速路径：按固定布局提取 LZMA1 解码所需字段，然后由本文件中的
- * decode_folder 直接调用汇编解码核心。它不验证 7z 结构字段或 CRC。
+ * 快速路径：按固定布局提取 LZMA 解码字段，然后由本文件中的 decode_folder
+ * 调用统一汇编入口。LZMA2 块控制解析仅在 LZMA_C_API_LZMA2 宏下编译。
+ * 此入口不验证 7z 结构字段或 CRC。
  *
  * 参数：archive 是完整 7z 文件的只读地址，archive_size 是字节数；output
  * 是调用方提供的可写解压缓冲区，output_capacity 是其容量；output_size 指向
@@ -170,11 +406,40 @@ SevenZipResult sevenzip_extract_single_lzma1_fast(
         ++cursor;
     }
 
+#ifdef LZMA_C_API_LZMA2
+    /* 单 folder、单 coder 的固定前缀；之后按方法 ID 长度和属性长度读取。 */
+    cursor += 5;
+    {
+        uint8_t coder_flags = *cursor++;
+        unsigned method_size = coder_flags & 15u;
+        const uint8_t *method = cursor;
+        if ((coder_flags & 0xD0u) || !(coder_flags & 0x20u))
+            return SEVENZIP_UNSUPPORTED;
+        if (method_size == 3 && method[0] == 3 &&
+            method[1] == 1 && method[2] == 1) {
+            folder.method = FAST_METHOD_LZMA1;
+        } else if (method_size == 1 && method[0] == 0x21) {
+            folder.method = FAST_METHOD_LZMA2;
+        } else {
+            return SEVENZIP_UNSUPPORTED;
+        }
+        cursor += method_size;
+        folder.properties_size = (uint8_t)read_number_fast(&cursor);
+        if ((folder.method == FAST_METHOD_LZMA1 && folder.properties_size != 5) ||
+            (folder.method == FAST_METHOD_LZMA2 && folder.properties_size != 1))
+            return SEVENZIP_UNSUPPORTED;
+        memcpy(folder.properties, cursor, folder.properties_size);
+        cursor += folder.properties_size;
+    }
+#else
     /* 固定布局中的 UnpackInfo、folder、coder 和 LZMA1 方法 ID。 */
     cursor += 9;
     ++cursor; /* 属性长度字段固定为 5。 */
+    folder.method = FAST_METHOD_LZMA1;
+    folder.properties_size = 5;
     folder.properties[0] = *cursor;
     cursor += sizeof(folder.properties);
+#endif
     ++cursor; /* UnpackSize tag。 */
     folder.unpacked_size = read_number_fast(&cursor);
     return decode_folder(archive, archive_size, next_offset, &folder, output,

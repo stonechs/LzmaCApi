@@ -1,6 +1,6 @@
 # LzmaCApi
 
-一个面向 32 位 Windows 的 LZMA1 C 解码 API，并提供单文件 7z 容器解析层。解码汇编基于 Ilya Kurdyukov 的 x86 静态 micro-LZMA 核心（CC BY 3.0）。
+一个面向 32 位 Windows 的 LZMA1 C 解码 API，并提供单文件 7z 快速容器路径。默认构建支持 LZMA1；fast 路径可通过 `LZMA_C_API_LZMA2` 宏额外启用 LZMA2 分块解码。解码汇编基于 Ilya Kurdyukov 的 x86 静态 micro-LZMA 核心（CC BY 3.0）。
 
 ## 目录结构
 
@@ -29,6 +29,14 @@
 
 它只编译 `sevenzip_single_fast.c`、LZMA C API 和汇编核心，不链接完整 7z Header 解析器，生成 `build/lzmacapi_x86_fast.lib` 和 `build/lzmacapi_x86_fast_debug.lib`。快速库也包含原始 LZMA C API。专用变长整数读取器要求所有 7z 偏移和长度小于 100 MiB，并且每个变长整数位置之后至少有 4 个可读字节。完整库也包含快速入口以保持既有 API 可用。
 
+LZMA2 fast 变体通过测试脚本编译，LZMA2 控制层、持久状态参数和 fast 容器识别均由 `LZMA_C_API_LZMA2` 编译宏隔离：
+
+```powershell
+.\script\test_fast_lzma2.ps1
+```
+
+脚本会构建宏关闭/启用的独立目标、测试两种模式下的 raw API，并用 7-Zip 生成 LZMA1、LZMA2 多压缩块、未压缩块和混合数据归档，在 release/debug 两种构建下逐字节比较解码结果。
+
 ## 单文件 7z 容器 API
 
 `SRC/sevenzip_single.h` 提供 `sevenzip_extract_single_lzma1`。调用方将完整 7z 文件读入内存并提供输出缓冲区；函数解析普通 7z Header，再调用本项目的 `lzma_c_api_decode` 解压文件数据。内部按 LZMA 属性分配 workspace。它只支持一个非空文件、一个 packed stream 和一个 LZMA1 coder；压缩 Header、LZMA2、加密、滤镜、多文件、多流和分卷均不支持。定义 `LZMA_C_API_DEBUG` 时会校验签名、CRC、Reader 读取范围、归档数据范围和输出容量；发布版省略这些检查，调用方必须提供完整有效的归档及足够大的输出缓冲区。[7z 格式定义](https://github.com/ip7z/7zip/blob/main/DOC/7zFormat.txt)
@@ -50,7 +58,7 @@ SevenZipResult rc = sevenzip_extract_single_lzma1(
 
 ### 快速入口
 
-`sevenzip_extract_single_lzma1_fast` 使用相同参数，跳过完整 Header 和 FilesInfo 验证，只提取解码必需的 packed 数据偏移/长度、5 字节 LZMA 属性和解压长度。fast 路径的 `decode_folder` 直接调用汇编解码入口，不经过 `lzma_c_api_decode` wrapper；完整库仍保留原始 LZMA C API 和普通解析路径：
+`sevenzip_extract_single_lzma1_fast` 使用相同参数，跳过完整 Header 和 FilesInfo 验证，只提取解码必需的 packed 数据偏移/长度、属性和解压长度。fast 路径直接调用统一汇编解码入口，不经过 `lzma_c_api_decode` wrapper；完整库仍保留原始 LZMA C API 和普通解析路径：
 
 ```c
 SevenZipResult rc = sevenzip_extract_single_lzma1_fast(
@@ -58,7 +66,7 @@ SevenZipResult rc = sevenzip_extract_single_lzma1_fast(
     output_buffer, output_capacity, &output_size);
 ```
 
-它假设起始头及偏移都有效，普通 Header 的 `MainStreamsInfo` 紧跟 Header；PackInfo 后是单 folder、单 LZMA1 coder（3 字节 coder ID，5 字节属性）。不支持 ArchiveProperties、AdditionalStreamsInfo、压缩 Header、加密、滤镜、多文件、多流或分卷。可选 Pack CRC 只跳过，不验证；函数也不解析 SubStreamsInfo 和 FilesInfo。因此调用方必须保证完整可信的归档、正确的 LZMA1 字段和足够大的输出缓冲区。快速专用库还要求所有偏移和长度小于 100 MiB，并保证每个变长整数地址后至少有 4 个可读字节。结构不符合这些假设时，快速入口可能读错位置或越界。
+默认构建只支持单 LZMA1 coder（3 字节 coder ID，5 字节属性）。`LZMA_C_API_LZMA2` 构建也接受单 LZMA2 coder（1 字节 coder ID，1 字节字典属性），并处理压缩块、未压缩块、字典/状态/属性重置及流结束标记。两种模式都假设起始头及偏移有效，普通 Header 的 `MainStreamsInfo` 紧跟 Header；不支持 ArchiveProperties、AdditionalStreamsInfo、压缩 Header、加密、滤镜、多文件、多流或分卷。可选 Pack CRC 只跳过，不验证；函数也不解析 SubStreamsInfo 和 FilesInfo。因此调用方必须保证完整可信的归档和足够大的输出缓冲区。快速专用库还要求所有偏移和长度小于 100 MiB，并保证每个变长整数地址后至少有 4 个可读字节。结构不符合这些假设时，快速入口可能读错位置或越界。
 
 生成真实 LZMA1 归档并测试容器层（需要安装 7-Zip）：
 
@@ -87,7 +95,7 @@ SevenZipResult rc = sevenzip_extract_single_lzma1_fast(
 
 尽管 API 接收 `src_size`，解码核心读取压缩数据时不会检查输入边界；损坏或截断的输入可能导致越界读写。它也不能安全处理不可信输入。请只对可信、完整且属性和解压长度正确的码流调用。实现仅支持 32 位 Windows。
 
-解码入口通过普通 x86 cdecl 调用直接接收 `src`、`dst`、`workspace`、`output_size`、`workspace_size` 和 `lc/lp/pb`；汇编入口将 `dst + output_size` 算成输出停止地址，并将输入指针推进 5 字节，按 `workspace_size/2` 初始化概率项。`pb/lp` 掩码在入口计算并保存在栈上，`lc` 在字面量解码时作为变量移位量使用。
+解码入口通过普通 x86 cdecl 调用直接接收 `src`、`dst`、`workspace`、`output_size`、`workspace_size` 和 `lc/lp/pb`；C 在调用汇编前将概率项初始化为 1024。启用 LZMA2 宏时，同一汇编入口还接收 C 管理的状态结构指针，供压缩块间保存/恢复概率之外的状态。汇编入口将 `dst + output_size` 算成输出停止地址并将输入指针推进 5 字节；`pb/lp` 掩码在入口计算并保存在栈上，`lc` 在字面量解码时作为变量移位量使用。
 
 汇编代码不会在运行时被修改，C 层不需要修改代码页权限或刷新指令缓存。多个调用可以并发执行，但每次调用必须使用各自不重叠的输入、输出和 workspace 缓冲区。
 

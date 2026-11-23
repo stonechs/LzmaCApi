@@ -13,6 +13,22 @@ Updated: 2026-11-22
 
 ## Current state
 
+- **V0.6.3（待本地提交）**：概率表初始化统一由 C 完成，覆盖 raw C API、完整
+  LZMA1 容器路径和 fast 路径；它们共用 `lzma_static_x86_run` 汇编入口。宏
+  `LZMA_C_API_LZMA2` 仅为 fast 路径编译 LZMA2 coder/分块控制，并在概率表后
+  分配 C 管理的持久状态区；默认构建仍是 LZMA1 fast 路径，完整容器解析器仍
+  只支持 LZMA1。Clang i686 构建、raw API 3 组属性用例、普通 7z 用例、`forTest/`
+  12 个归档、50 个压力归档（release/debug 共 100 次）和 LZMA2 专项（4 类归档、
+  release/debug 共 8 次）均通过。结果见
+  `work/forTest_decode_20261122_195205_083/results.csv`、
+  `work/stress_sevenzip_50_20261122_200039_437/results.csv` 和
+  `work/fast_lzma2_20261122_200146_858/`；对应 map/exe 位于
+  `dist/builds/fedeb8a_20261122_195145_494_09617fa9/`、
+  `dist/builds/fedeb8a_sevenzip_20261122_195155_021_6ce19959/`、
+  `dist/builds/fedeb8a_forTest_20261122_195205_372_10f26129/`、
+  `dist/builds/fedeb8a_stress50_20261122_200039_757_698d6b39/` 和
+  `dist/builds/fedeb8a_fast_lzma2_20261122_200146_858_15ae742d/`。构建只出现测试
+  程序 `fopen` 弃用警告。对应快照目录：`dist/V0.6.3_C_workspace_init/`。
 - V0.6.2 的 fast `decode_folder` 直接调用 `lzma_static_x86_run`，不再依赖
   `lzma_c_api_decode` wrapper；完整库仍提供 raw LZMA C API。Debug fast 路径保留
   输入起始字节、区间、输出容量和实际输出长度检查。release/debug 构建、API

@@ -1,14 +1,31 @@
 #include "lzma_c_api.h"
+#include "lzma_x86_state.h"
+
+static void initialize_probabilities(void *workspace, size_t count)
+{
+    uint16_t *p = (uint16_t *)workspace;
+    size_t i;
+    for (i = 0; i < count; ++i)
+        p[i] = 1024;
+}
 
 /* Implemented by the statically linked NASM decoder. */
 #ifdef LZMA_C_API_DEBUG
 extern uint8_t *__cdecl lzma_static_x86_run(
     const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
-    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb);
+    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb
+#ifdef LZMA_C_API_LZMA2
+    , LzmaX86State *state
+#endif
+    );
 #else
 extern void __cdecl lzma_static_x86_run(
     const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
-    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb);
+    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb
+#ifdef LZMA_C_API_LZMA2
+    , LzmaX86State *state
+#endif
+    );
 #endif
 
 LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
@@ -17,8 +34,12 @@ LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
                                  unsigned lc, unsigned lp, unsigned pb,
                                  void *workspace, size_t workspace_size)
 {
+    size_t probability_count;
 #ifdef LZMA_C_API_DEBUG
     uint8_t *end;
+#endif
+#ifdef LZMA_C_API_LZMA2
+    LzmaX86State state;
 #endif
 
 #ifdef LZMA_C_API_DEBUG
@@ -37,17 +58,31 @@ LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
     (void)dst_size;
 #endif
 
-    /* 汇编直接读取参数；src 偏移和 workspace 概率表初始化由解码器处理。 */
+    /* C 初始化概率表，汇编入口只执行解码；二者共用同一套参数接口。 */
+    probability_count = 2048u + (768u << (lc + lp));
+    initialize_probabilities(workspace, probability_count);
+#ifdef LZMA_C_API_LZMA2
+    lzma_x86_state_reset(&state);
+    state.position_bias = 0u - (uint32_t)(uintptr_t)dst;
+#endif
 #ifdef LZMA_C_API_DEBUG
     end = lzma_static_x86_run(
-        src, dst, workspace, output_size, workspace_size, lc, lp, pb);
+        src, dst, workspace, output_size, workspace_size, lc, lp, pb
+#ifdef LZMA_C_API_LZMA2
+        , &state
+#endif
+        );
 
     if (end < dst || (size_t)(end - dst) != output_size)
         return LZMA_C_API_INVALID_STREAM;
     *dst_size = (size_t)(end - dst);
 #else
     lzma_static_x86_run(
-        src, dst, workspace, output_size, workspace_size, lc, lp, pb);
+        src, dst, workspace, output_size, workspace_size, lc, lp, pb
+#ifdef LZMA_C_API_LZMA2
+        , &state
+#endif
+        );
 #endif
     return LZMA_C_API_OK;
 }

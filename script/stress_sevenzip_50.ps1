@@ -13,7 +13,7 @@ if (-not (Test-Path (Join-Path $build 'lzmacapi_x86.lib'))) {
 }
 
 $runRoot = Join-Path $work ('stress_sevenzip_50_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff'))
-$revision = git describe --tags --exact-match 2>$null
+$revision = git tag --points-at HEAD | Select-Object -First 1
 if (-not $revision) { $revision = git rev-parse --short HEAD }
 $buildStamp = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
 $buildId = [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -71,15 +71,18 @@ for ($caseIndex = 0; $caseIndex -lt 50; $caseIndex++) {
     [IO.File]::WriteAllBytes($inputPath, $data)
 
     # 7-Zip LZMA1 属性覆盖 lc/lp/pb 合法组合；dictionary 和压缩等级也变化。
-    $lc = $caseIndex % 5
-    $lp = [int]([Math]::Floor($caseIndex / 5) % (5 - $lc))
     $pb = ($caseIndex * 3) % 5
     $dict = @('64k','256k','1m','4m')[$caseIndex % 4]
     $level = 1 + ($caseIndex % 5)
-    $method = "-m0=LZMA:d=$dict`:lc=$lc`:lp=$lp`:pb=$pb"
+    $methodArgs = [object[]]@(
+        $dict,
+        [int]($caseIndex % 5),
+        [int]([Math]::Floor($caseIndex / 5) % (5 - ($caseIndex % 5))),
+        [int](($caseIndex * 3) % 5))
+    $method = [string]::Format('-m0=LZMA:d={0}:lc={1}:lp={2}:pb={3}', $methodArgs)
     & $sevenZip a -t7z $method "-mx=$level" -mhc=off -y $archivePath $inputPath | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        $results.Add([pscustomobject]@{ Archive=$name; InputBytes=$length; Lc=$lc; Lp=$lp; Pb=$pb; Dictionary=$dict; Level=$level; Release='7z create failed'; Debug='not run' })
+        $results.Add([pscustomobject]@{ Archive=$name; InputBytes=$length; Lc=[int]($caseIndex % 5); Lp=[int]([Math]::Floor($caseIndex / 5) % (5 - ($caseIndex % 5))); Pb=$pb; Dictionary=$dict; Level=$level; Release="7z create failed ($LASTEXITCODE)"; Debug='not run' })
         continue
     }
 
@@ -88,7 +91,7 @@ for ($caseIndex = 0; $caseIndex -lt 50; $caseIndex++) {
     & $debugExe $archivePath $inputPath | Out-Null
     $debugStatus = if ($LASTEXITCODE -eq 0) { 'PASS' } else { "FAIL ($LASTEXITCODE)" }
     $results.Add([pscustomobject]@{
-        Archive=($name + '.7z'); InputBytes=$length; Lc=$lc; Lp=$lp; Pb=$pb
+        Archive=($name + '.7z'); InputBytes=$length; Lc=[int]($caseIndex % 5); Lp=[int]([Math]::Floor($caseIndex / 5) % (5 - ($caseIndex % 5))); Pb=$pb
         Dictionary=$dict; Level=$level; Release=$releaseStatus; Debug=$debugStatus
     })
     if (($caseIndex + 1) % 10 -eq 0) { Write-Output "Completed $($caseIndex + 1)/50 archives" }
