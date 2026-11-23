@@ -131,6 +131,10 @@ workspace 大小固定为 `2 * (2048 + (768 << 12)) = 6,295,552` 字节；汇编
 
 `test_raw_lzma1.ps1` 需要 Python 3 的标准 `lzma` 模块生成临时 LZMA-Alone 样本；其他回归脚本使用 Clang 和 7-Zip。测试脚本在 `dist/builds/` 保存测试 EXE、对应 Map 和 `build_info.txt`；输入、解压结果及 CSV 报告写入 `work/`。V1.1 发布验证包括 7z 与裸 LZMA1 冒烟、116 个 LZMA1 归档和 50 个生成的压力归档，发布版和调试版均通过；3 个 LZMA2 归档按支持范围跳过。
 
+## 第三方代码来源与署名
+
+`SRC/lzma_static_x86.asm` 中的 LZMA1 解码核心基于 Ilya Kurdyukov 的 **Micro LZMA decoder for x86 (static)**。原始源码位于 [micro-lzmadec/static.x86.asm](https://github.com/ilyakurdyukov/micro-lzmadec/blob/main/static.x86.asm)，原作者版权为 Copyright (c) 2022, Ilya Kurdyukov，许可为 [Creative Commons Attribution 3.0 (CC BY 3.0)](https://creativecommons.org/licenses/by/3.0/)。本项目保留了汇编文件中的原版权和许可声明，并对解码器入口、输出长度控制、概率表与状态初始化及 7z 集成进行了修改。更完整的署名与许可说明见 [NOTICE.md](NOTICE.md)。该许可说明针对派生汇编代码，不代表本项目其他文件的许可范围。
+
 ## 目录
 
 - `SRC/`：C 容器解析器、公共头文件、x86 汇编解码器和测试程序。
