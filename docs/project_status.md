@@ -13,6 +13,13 @@ Updated: 2026-11-22
 
 ## Current state
 
+- **V0.6.7（代码提交 `45b6734a7dbe47f50494b7454ff53970f6bf3617`；LZMA2 状态回写宏隔离）**：汇编核心只在 `LZMA_C_API_LZMA2` 构建中把 state、
+  rep0..rep3 和 previous 写回 context；普通 LZMA1 仍使用相同 context 布局，但省去这段
+  无需保留的结束写回代码。普通 LZMA1 release/debug 构建、3 组 raw API 和 smoke 均通过；
+  LZMA2 宏 release/debug 构建、3 组 raw API 和 4 类归档均通过。构建只出现已有测试程序
+  `fopen` 弃用警告。map/exe 位于 `dist/builds/V0.6.6_20261122_221951_980_886befdc/`
+  和 `dist/builds/V0.6.6_fast_lzma2_20261122_221958_904_d38026a1/`。快照：
+  `dist/V0.6.7_lzma2_state_writeback_only/`。
 - **V0.6.6（代码提交 `a128f03ee37c4724cf60fb1fd58502f329b9a668`；fast 7z 解析代码中文注释）**：为 `sevenzip_single_fast.c` 补充中文说明，覆盖
   简化 UINT64 读取器、LZMA 属性拆分、LZMA2 控制字节/重置状态、context/workspace
   初始化、固定布局解析和发布版限制；并说明不支持 EncodedHeader（压缩 Header），
