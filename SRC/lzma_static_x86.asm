@@ -25,25 +25,27 @@
 BITS 32
 section .lzma code align=16
 
+%define LZMA1_MAX_PROB_COUNT (2048 + (768 << 12))
+
 ; 链接器会把此段标为可读、可执行。
 global _lzma_static_x86_run
 
 ; -----------------------------------------------------------------------------
-; 统一解码入口：cdecl run(src, dst, context, output_size, lc, lp, pb)
+; 统一解码入口：cdecl run(src, dst, workspace, output_size, lc, lp, pb)
 ; 保存三个非易失寄存器并建立 EBP 帧后，参数槽为：
 ;   [EBP+20] src         原始 range stream 地址；入口将其推进 5 字节
 ;   [EBP+24] dst         当前输出指针（解码过程中递增）
-;   [EBP+28] context     状态结构地址；入口将此参数槽改成概率表地址供核心使用
+;   [EBP+28] workspace   C 端初始化的 uint16_t 概率表首地址
 ;   [EBP+32] output_size 输入输出槽：先是目标长度，入口加 dst 后覆盖为停止地址
 ;   [EBP+36] lc          字面量上下文属性
 ;   [EBP+40] lp          字面量位置属性
 ;   [EBP+44] pb          位置状态属性
-; context 固定布局：state、rep0..rep3、previous 共 24 字节，概率表紧随其后。
-; 输入、输出和 context 指针直接使用 C 调用时的参数槽，不复制到自定义槽。
+; LZMA state、rep0..rep3 和 previous 由汇编在当前调用栈上初始化。
+; workspace 固定容纳最大 lc+lp=12 的概率表，并在入口由汇编填充为 1024。
+; 输入、输出和 workspace 指针直接使用 C 调用时的参数槽，不复制到自定义槽。
 ; LOC 宏以 EBP 为基准向负偏移分配 4 字节工作变量。核心栈帧变量布局：
-;   [EBP-4] context 指针
-;   后续槽依次保存 PbMask、LpMask、Code、Range、rep0..rep3 和 LZMA state。
-; 这些变量在当前调用的栈上；context 连续保存初始状态和概率模型表。LOC 的可选参数
+;   依次保存 PbMask、LpMask、Code、Range、rep0..rep3 和 LZMA state。
+; 这些变量在当前调用的栈上；workspace 只保存概率模型表。LOC 的可选参数
 ; 可指定变量占用字节数及访问类型，也可用 none 省略显式类型；本文件使用
 ; 默认的 4 字节 dword 变量和 EBP 基址。
 %assign loc_pos 0
@@ -55,7 +57,6 @@ global _lzma_static_x86_run
 %xdefine %1 %3 [ebp-loc_pos]
 %endif
 %endmacro
-LOC _context
 LOC PbMask
 LOC LpMask
 %assign loc_lp loc_pos
@@ -72,7 +73,7 @@ LOC _state
 
 ; 解码过程中 EDI 保持 _rc_bit1 的入口地址，CALL _rc_bit 等价于 CALL EDI。
 %define _rc_bit edi
-; C 传入的指针参数槽直接作为工作变量。Temp 指向 context 后面的概率表；Dest 是会随输出
+; C 传入的指针参数槽直接作为工作变量。Temp 直接指向 workspace；Dest 是会随输出
 ; 递增的当前写入指针；Src 是会随 range normalization 前进的输入指针；
 ; DestEnd 槽由入口将 output_size 加到 dst 上得到。后面直接读写参数槽更新 Src、Dest。
 %define Src dword [ebp+20]
@@ -87,10 +88,11 @@ _lzma_static_x86_run:
 	push	ebx
 	enter	0, 0
 _start:
-	mov	eax, [ebp+28]
-	push	eax		; 暂存 context 指针，随后读取 C 初始化的 LZMA 状态。
-	lea	eax, [eax+24]
-	mov	[ebp+28], eax	; 复用参数槽，Temp 从此直接指向概率表。
+	; 固定最大概率表有 2048+(768<<12) 个 uint16_t；用 REP STOSW 写入初值 1024。
+	mov	eax, 1024
+	mov	edi, Temp
+	mov	ecx, LZMA1_MAX_PROB_COUNT
+	rep stosw
 
 	; 将 C 传入的 output_size 转成目标末地址，并覆盖原参数槽，供解码循环比较。
 	mov	eax, [ebp+24]
@@ -115,14 +117,15 @@ _start:
 	bswap	eax
 	push	eax		; Code 初值。
 	push	-1		; Range 初值为 0xFFFFFFFF。
-	; C 在统一 context 前缀中初始化状态和四个 rep 距离；加载到栈上供核心工作。
-	mov	eax, _context
-	push	dword [eax+4]	; rep0。
-	push	dword [eax+8]	; rep1。
-	push	dword [eax+12]	; rep2。
-	push	dword [eax+16]	; rep3。
-	push	dword [eax]	; LZMA state。
-	mov	ebx, [eax+20]	; 上一输出字节。
+	; 新 LZMA1 流从 state=0、rep0..rep3=1、previous=0 开始。
+	mov	eax, 1
+	push	eax		; rep0。
+	push	eax		; rep1。
+	push	eax		; rep2。
+	push	eax		; rep3。
+	xor	eax, eax
+	push	eax		; LZMA state。
+	mov	ebx, eax	; 上一输出字节为 0。
 	call	_loop1
 
 	; 用 CALL/POP 技巧取得 _rc_bit1 的运行时地址并保存到 EDI；解码主体

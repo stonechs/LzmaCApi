@@ -27,8 +27,9 @@ typedef enum SevenZipResult {
  * 有效的 size_t，成功时接收实际输出长度。此入口不验证指针、归档长度或容量。
  * 仅适用于完整可信的 7z 文件：普通 Header 后紧跟 MainStreamsInfo；一个非空
  * 文件、一个 packed stream、一个 LZMA1 coder，coder ID 为 3 字节且属性为 5 字节。
- * workspace 由 C 端分配并初始化状态与概率表，汇编入口只接收 src、dst、
- * context、output_size 和 lc/lp/pb。
+ * workspace 由 C 端按最大概率表容量分配；汇编入口将每项初始化为 1024，LZMA
+ * 状态和重复距离也在汇编调用栈上初始化。汇编入口接收 src、dst、workspace、
+ * output_size 和 lc/lp/pb。
  * 不支持 ArchiveProperties、AdditionalStreamsInfo、压缩 Header、加密、滤镜、
  * 多文件、多流或分卷。调用方必须确保输出容量足够，解码输入完整且属性正确。
  * fast-only 静态库的 32 位变长整数读取器要求所有长度和偏移小于 100 MiB，

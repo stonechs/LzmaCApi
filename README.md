@@ -19,13 +19,13 @@ V1.0.1 开发线只保留快速 7z 入口和静态 x86 LZMA1 解码核心。它�
 
 ## C 到汇编接口
 
-C 端分配一个连续 workspace：前 24 字节保存 LZMA 状态和重复距离，后接概率表。C 根据 `lc/lp` 计算表项数，把每项初始化为 1024。汇编不接收 workspace 大小，也不初始化工作区；cdecl 接口为：
+C 端固定分配最大概率表 workspace。表项数按 `lc + lp = 12` 的上限取 `2048 + (768 << 12)`，共 3,147,776 个 `uint16_t`，占 6,295,552 字节（6 MiB）。汇编入口用 `rep stosw` 将每项初始化为 1024，并在调用栈上初始化 LZMA 状态和重复距离；不按每个文件的 `lc/lp` 计算表大小，也不传递 workspace 大小。cdecl 接口为：
 
 ```c
-run(src, dst, context, output_size, lc, lp, pb);
+run(src, dst, workspace, output_size, lc, lp, pb);
 ```
 
-汇编从 `context + 24` 读取概率表，并以 `dst + output_size` 为停止地址。内部 workspace 由 fast 入口分配和释放，调用者只需准备完整归档和输出缓冲区。
+汇编从 `workspace` 直接读取概率表，并以 `dst + output_size` 为停止地址。fast 入口每次分配并释放 6 MiB workspace，调用者只需准备完整归档和输出缓冲区。
 
 ## 构建和验证
 
@@ -42,4 +42,4 @@ run(src, dst, context, output_size, lc, lp, pb);
 
 ## 当前版本
 
-V1.0 是从 V0.6.2 继续的 LZMA1-only 基线。V1.0.1 开发内容是移除普通解析器和 raw C API 路径，改为 C 初始化 24 字节 workspace context 与概率表，并把统一简化接口用于唯一的 fast 解码路径。构建和回归状态见 [`docs/project_status.md`](docs/project_status.md)。
+V1.0 是从 V0.6.2 继续的 LZMA1-only 基线。V1.0.1 移除了普通解析器和 raw C API 路径；V1.0.2 固定分配最大概率表 workspace，并由汇编 `rep stosw` 初始化表项和栈上解码状态。构建和回归状态见 [`docs/project_status.md`](docs/project_status.md)。

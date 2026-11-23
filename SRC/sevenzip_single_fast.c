@@ -1,19 +1,19 @@
 #include "sevenzip_single.h"
-#include "lzma_x86_state.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #define SEVENZIP_START_SIZE 32u
 #define SEVENZIP_MAX_DECODED 0x01000000u
+#define LZMA1_MAX_PROB_COUNT (2048u + (768u << 12))
 
 #ifdef LZMA_C_API_DEBUG
 extern uint8_t *__cdecl lzma_static_x86_run(
-    const uint8_t *src, uint8_t *dst, LzmaX86Context *context,
+    const uint8_t *src, uint8_t *dst, void *workspace,
     size_t output_size, unsigned lc, unsigned lp, unsigned pb);
 #else
 extern void __cdecl lzma_static_x86_run(
-    const uint8_t *src, uint8_t *dst, LzmaX86Context *context,
+    const uint8_t *src, uint8_t *dst, void *workspace,
     size_t output_size, unsigned lc, unsigned lp, unsigned pb);
 #endif
 
@@ -76,15 +76,6 @@ static int decode_properties(const uint8_t *props, unsigned *lc,
 #endif
 }
 
-/* workspace 前 24 字节放汇编状态，概率表紧随其后，由 C 初始化为 1024。 */
-static void initialize_probabilities(LzmaX86Context *context, size_t count)
-{
-    uint16_t *probabilities = lzma_x86_probabilities(context);
-    size_t i;
-    for (i = 0; i < count; ++i)
-        probabilities[i] = 1024;
-}
-
 /* fast-only 静态库自己的 folder 解码实现，不依赖完整 7z 解析器。 */
 static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
                                     size_t packed_limit, const FastFolder *folder,
@@ -92,8 +83,8 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
                                     size_t *output_size)
 {
     unsigned lc, lp, pb;
-    size_t probability_count, workspace_size;
-    LzmaX86Context *context;
+    size_t workspace_size;
+    uint16_t *workspace;
 #ifdef LZMA_C_API_DEBUG
     uint8_t *end;
 #endif
@@ -114,26 +105,23 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
 #endif
     if (!decode_properties(folder->properties, &lc, &lp, &pb))
         return SEVENZIP_UNSUPPORTED;
-    probability_count = 2048u + (768u << (lc + lp));
-    workspace_size = sizeof(*context) + probability_count * sizeof(uint16_t);
-    context = (LzmaX86Context *)malloc(workspace_size);
-    if (!context) return SEVENZIP_MEMORY_ERROR;
-    lzma_x86_context_reset(context);
-    initialize_probabilities(context, probability_count);
+    workspace_size = (size_t)LZMA1_MAX_PROB_COUNT * sizeof(*workspace);
+    workspace = (uint16_t *)malloc(workspace_size);
+    if (!workspace) return SEVENZIP_MEMORY_ERROR;
 #ifdef LZMA_C_API_DEBUG
     if (archive[folder->packed_offset] != 0) {
-        free(context);
+        free(workspace);
         return SEVENZIP_DECODE_ERROR;
     }
-    end = lzma_static_x86_run(archive + folder->packed_offset, output, context,
+    end = lzma_static_x86_run(archive + folder->packed_offset, output, workspace,
                               folder->unpacked_size, lc, lp, pb);
-    free(context);
+    free(workspace);
     if (end < output || (size_t)(end - output) != folder->unpacked_size)
         return SEVENZIP_DECODE_ERROR;
 #else
-    lzma_static_x86_run(archive + folder->packed_offset, output, context,
+    lzma_static_x86_run(archive + folder->packed_offset, output, workspace,
                         folder->unpacked_size, lc, lp, pb);
-    free(context);
+    free(workspace);
 #endif
     *output_size = folder->unpacked_size;
     return SEVENZIP_OK;
