@@ -13,6 +13,15 @@ Updated: 2026-11-22
 
 ## Current state
 
+- **V0.6.6（代码提交 `a128f03ee37c4724cf60fb1fd58502f329b9a668`；fast 7z 解析代码中文注释）**：为 `sevenzip_single_fast.c` 补充中文说明，覆盖
+  简化 UINT64 读取器、LZMA 属性拆分、LZMA2 控制字节/重置状态、context/workspace
+  初始化、固定布局解析和发布版限制；并说明不支持 EncodedHeader（压缩 Header），
+  LZMA2 文件数据支持与压缩 Header 支持相互独立。Clang i686 release/debug 构建、
+  raw API 三组属性、release smoke、LZMA2 宏下 raw API 与 4 类归档 release/debug 均通过；
+  `git diff --check` 通过。构建只出现已有测试程序 `fopen` 弃用警告。map/exe 位于
+  `dist/builds/V0.6.5_20261122_214847_052_a1b3a956/` 和
+  `dist/builds/V0.6.5_fast_lzma2_20261122_214852_807_61bd46c2/`。快照：
+  `dist/V0.6.6_fast_parser_comments/`。
 - **V0.6.5（代码提交 `ba3cfe3f0dfbba499ef97c9b294180a8e97e5f40`；概率项数单次计算）**：`lzma_c_api_decode` 在 Debug 参数检查后只计算一次
   `2048 + (768 << (lc + lp))`，结果同时用于 workspace 容量检查和概率表初始化；
   `decode_lzma2_stream` 删除概率表重置后未使用的重复赋值。Clang i686 release/debug
