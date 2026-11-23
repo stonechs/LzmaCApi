@@ -77,6 +77,18 @@ SevenZipResult rc = sevenzip_extract_single_lzma1_fast(
 .\script\stress_sevenzip_50.ps1
 ```
 
+## Workspace 布局
+
+`lzma_c_api_decode` 的 `workspace` 现在指向统一 context：前 `LZMA_C_API_CONTEXT_SIZE`
+（28）字节保存 LZMA 状态和 rep 距离，后续空间保存概率表。调用方所需字节数为：
+
+```c
+LZMA_C_API_CONTEXT_SIZE +
+(2048u + (768u << (lc + lp))) * sizeof(uint16_t)
+```
+
+普通 LZMA1 与 `LZMA_C_API_LZMA2` 构建共用相同 context 和汇编入口；LZMA2 fast 路径仍只为概率表按 `lc+lp<=4` 的最大值分配空间。
+
 ## API 测试
 
 构建脚本会生成 LZMA 码流和对应的预期输出，并让测试程序链接刚生成的静态库。当前覆盖以下属性组合：
@@ -95,7 +107,7 @@ SevenZipResult rc = sevenzip_extract_single_lzma1_fast(
 
 尽管 API 接收 `src_size`，解码核心读取压缩数据时不会检查输入边界；损坏或截断的输入可能导致越界读写。它也不能安全处理不可信输入。请只对可信、完整且属性和解压长度正确的码流调用。实现仅支持 32 位 Windows。
 
-解码入口通过普通 x86 cdecl 调用直接接收 `src`、`dst`、`workspace`、`output_size`、`workspace_size` 和 `lc/lp/pb`；C 在调用汇编前将概率项初始化为 1024。启用 LZMA2 宏时，同一汇编入口还接收 C 管理的状态结构指针，供压缩块间保存/恢复概率之外的状态。汇编入口将 `dst + output_size` 算成输出停止地址并将输入指针推进 5 字节；`pb/lp` 掩码在入口计算并保存在栈上，`lc` 在字面量解码时作为变量移位量使用。
+解码入口通过普通 x86 cdecl 调用接收 `src`、`dst`、`context`、`output_size` 和 `lc/lp/pb`。context 前 28 字节保存状态，概率表紧随其后；C 初始化概率项为 1024，汇编通过一个 context 指针读写状态及概率表。汇编入口将 `dst + output_size` 算成输出停止地址并将输入指针推进 5 字节；`pb/lp` 掩码在入口计算并保存在栈上，`lc` 在字面量解码时作为变量移位量使用。
 
 汇编代码不会在运行时被修改，C 层不需要修改代码页权限或刷新指令缓存。多个调用可以并发执行，但每次调用必须使用各自不重叠的输入、输出和 workspace 缓冲区。
 

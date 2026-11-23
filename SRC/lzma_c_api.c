@@ -3,7 +3,7 @@
 
 static void initialize_probabilities(void *workspace, size_t count)
 {
-    uint16_t *p = (uint16_t *)workspace;
+    uint16_t *p = lzma_x86_probabilities((LzmaX86Context *)workspace);
     size_t i;
     for (i = 0; i < count; ++i)
         p[i] = 1024;
@@ -12,20 +12,12 @@ static void initialize_probabilities(void *workspace, size_t count)
 /* Implemented by the statically linked NASM decoder. */
 #ifdef LZMA_C_API_DEBUG
 extern uint8_t *__cdecl lzma_static_x86_run(
-    const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
-    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb
-#ifdef LZMA_C_API_LZMA2
-    , LzmaX86State *state
-#endif
-    );
+    const uint8_t *src, uint8_t *dst, void *context, size_t output_size,
+    unsigned lc, unsigned lp, unsigned pb);
 #else
 extern void __cdecl lzma_static_x86_run(
-    const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
-    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb
-#ifdef LZMA_C_API_LZMA2
-    , LzmaX86State *state
-#endif
-    );
+    const uint8_t *src, uint8_t *dst, void *context, size_t output_size,
+    unsigned lc, unsigned lp, unsigned pb);
 #endif
 
 LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
@@ -35,11 +27,9 @@ LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
                                  void *workspace, size_t workspace_size)
 {
     size_t probability_count;
+    LzmaX86Context *context = (LzmaX86Context *)workspace;
 #ifdef LZMA_C_API_DEBUG
     uint8_t *end;
-#endif
-#ifdef LZMA_C_API_LZMA2
-    LzmaX86State state;
 #endif
 
 #ifdef LZMA_C_API_DEBUG
@@ -50,7 +40,8 @@ LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
     *dst_size = 0;
     if (output_size > dst_capacity || (output_size && !dst))
         return LZMA_C_API_OUTPUT_TOO_SMALL;
-    if (workspace_size < (2048u + (768u << (lc + lp))) * sizeof(uint16_t))
+    if (workspace_size < LZMA_C_API_CONTEXT_SIZE +
+                         (2048u + (768u << (lc + lp))) * sizeof(uint16_t))
         return LZMA_C_API_WORKSPACE_TOO_SMALL;
 #else
     (void)src_size;
@@ -58,31 +49,23 @@ LzmaCApiResult lzma_c_api_decode(const uint8_t *src, size_t src_size,
     (void)dst_size;
 #endif
 
-    /* C 初始化概率表，汇编入口只执行解码；二者共用同一套参数接口。 */
+    /* 所有构建共用一个 context：状态在前，C 初始化的概率表在后。 */
+    lzma_x86_context_reset(context);
     probability_count = 2048u + (768u << (lc + lp));
     initialize_probabilities(workspace, probability_count);
 #ifdef LZMA_C_API_LZMA2
-    lzma_x86_state_reset(&state);
-    state.position_bias = 0u - (uint32_t)(uintptr_t)dst;
+    context->position_bias = 0u - (uint32_t)(uintptr_t)dst;
 #endif
 #ifdef LZMA_C_API_DEBUG
     end = lzma_static_x86_run(
-        src, dst, workspace, output_size, workspace_size, lc, lp, pb
-#ifdef LZMA_C_API_LZMA2
-        , &state
-#endif
-        );
+        src, dst, context, output_size, lc, lp, pb);
 
     if (end < dst || (size_t)(end - dst) != output_size)
         return LZMA_C_API_INVALID_STREAM;
     *dst_size = (size_t)(end - dst);
 #else
     lzma_static_x86_run(
-        src, dst, workspace, output_size, workspace_size, lc, lp, pb
-#ifdef LZMA_C_API_LZMA2
-        , &state
-#endif
-        );
+        src, dst, context, output_size, lc, lp, pb);
 #endif
     return LZMA_C_API_OK;
 }

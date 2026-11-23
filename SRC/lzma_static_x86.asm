@@ -29,22 +29,21 @@ section .lzma code align=16
 global _lzma_static_x86_run
 
 ; -----------------------------------------------------------------------------
-; 统一解码入口：cdecl run(src, dst, workspace, output_size, workspace_size, lc, lp, pb[, state])
+; 统一解码入口：cdecl run(src, dst, context, output_size, lc, lp, pb)
 ; 保存三个非易失寄存器并建立 EBP 帧后，参数槽为：
 ;   [EBP+20] src         原始 range stream 地址；入口将其推进 5 字节
 ;   [EBP+24] dst         当前输出指针（解码过程中递增）
-;   [EBP+28] workspace   概率表工作区
+;   [EBP+28] context     状态结构地址；入口将此参数槽改成概率表地址供核心使用
 ;   [EBP+32] output_size 输入输出槽：先是目标长度，入口加 dst 后覆盖为停止地址
-;   [EBP+36] workspace_size 工作区容量（字节）
-;   [EBP+40] lc          字面量上下文属性
-;   [EBP+44] lp          字面量位置属性
-;   [EBP+48] pb          位置状态属性
-;   [EBP+52] state       仅 LZMA_C_API_LZMA2 构建包含，指向 C 管理的状态区
-; 输入/输出/工作区指针直接使用 C 调用时的参数槽，不再复制到自定义栈槽。
+;   [EBP+36] lc          字面量上下文属性
+;   [EBP+40] lp          字面量位置属性
+;   [EBP+44] pb          位置状态属性
+; context 固定布局：状态/rep/previous/position_bias 共 28 字节，概率表紧随其后。
+; 输入、输出和 context 指针直接使用 C 调用时的参数槽，不复制到自定义槽。
 ; LOC 宏以 EBP 为基准向负偏移分配 4 字节工作变量。核心栈帧变量布局：
-;   [EBP-4..-8] Context、PositionBias（LZMA2 宏版本）
+;   [EBP-4..-8] Context、PositionBias
 ;   后续槽依次保存 PbMask、LpMask、Code、Range、rep0..rep3 和 LZMA state。
-; 这些变量在当前调用的栈上；workspace 另存概率模型表。LOC 的可选参数
+; 这些变量在当前调用的栈上；context 连续保存持久状态和概率模型表。LOC 的可选参数
 ; 可指定变量占用字节数及访问类型，也可用 none 省略显式类型；本文件使用
 ; 默认的 4 字节 dword 变量和 EBP 基址。
 %assign loc_pos 0
@@ -74,7 +73,7 @@ LOC _state
 
 ; 解码过程中 EDI 保持 _rc_bit1 的入口地址，CALL _rc_bit 等价于 CALL EDI。
 %define _rc_bit edi
-; C 传入的指针参数槽直接作为工作变量。Temp 指向 workspace；Dest 是会随输出
+; C 传入的指针参数槽直接作为工作变量。Temp 指向 context 后面的概率表；Dest 是会随输出
 ; 递增的当前写入指针；Src 是会随 range normalization 前进的输入指针；
 ; DestEnd 槽由入口将 output_size 加到 dst 上得到。后面直接读写参数槽更新 Src、Dest。
 %define Src dword [ebp+20]
@@ -89,26 +88,27 @@ _lzma_static_x86_run:
 	push	ebx
 	enter	0, 0
 _start:
+	mov	eax, [ebp+28]
+	push	eax		; 保存 context 指针，供解码结束时回写状态。
 	%ifdef LZMA_C_API_LZMA2
-		mov	eax, [ebp+52]
-		push	eax		; C 管理的持久状态区。
-		push	dword [eax+24]	; 逻辑位置偏置。
+		push	dword [eax+24]	; LZMA2 的逻辑位置偏置。
 	%else
-		push	dword 0
-		push	dword 0
+		push	dword 0	; LZMA1 保持原有位置索引行为。
 	%endif
+	lea	eax, [eax+28]
+	mov	[ebp+28], eax	; 复用参数槽，Temp 从此直接指向概率表。
 
 	; 将 C 传入的 output_size 转成目标末地址，并覆盖原参数槽，供解码循环比较。
 	mov	eax, [ebp+24]
 	add	[ebp+32], eax
 	; 位置状态掩码 pb_mask=(1<<pb)-1，后续每轮循环直接从局部变量读取。
-	mov	ecx, [ebp+48]
+	mov	ecx, [ebp+44]
 	mov	eax, 1
 	shl	eax, cl
 	dec	eax
 	push	eax
 	; 字面量位置掩码 lp_mask=(1<<lp)-1，同样只计算一次。
-	mov	ecx, [ebp+44]
+	mov	ecx, [ebp+40]
 	mov	eax, 1
 	shl	eax, cl
 	dec	eax
@@ -121,26 +121,14 @@ _start:
 	bswap	eax
 	push	eax		; Code 初值。
 	push	-1		; Range 初值为 0xFFFFFFFF。
-	; 概率表不在汇编清零；旧 LZMA1 调用仍从新的 LZMA 状态开始。
-	%ifdef LZMA_C_API_LZMA2
-		mov	eax, _context
-		push	dword [eax+4]	; rep0。
-		push	dword [eax+8]	; rep1。
-		push	dword [eax+12]	; rep2。
-		push	dword [eax+16]	; rep3。
-		push	dword [eax]	; LZMA state。
-		mov	ebx, [eax+20]	; 上一输出字节。
-	%else
-	xor	eax, eax
-	inc	eax
-	push	eax		; rep0 初值 1。
-	push	eax		; rep1 初值 1。
-	push	eax		; rep2 初值 1。
-	push	eax		; rep3 初值 1。
-	xor	eax, eax
-	push	eax		; LZMA state 初值 0。
-	mov	ebx, 1024	; BL=0，BH=4。
-	%endif
+	; C 在统一 context 前缀中初始化状态和四个 rep 距离；加载到栈上供核心工作。
+	mov	eax, _context
+	push	dword [eax+4]	; rep0。
+	push	dword [eax+8]	; rep1。
+	push	dword [eax+12]	; rep2。
+	push	dword [eax+16]	; rep3。
+	push	dword [eax]	; LZMA state。
+	mov	ebx, [eax+20]	; 上一输出字节。
 	call	_loop1
 
 	; 用 CALL/POP 技巧取得 _rc_bit1 的运行时地址并保存到 EDI；解码主体
@@ -213,7 +201,7 @@ _loop:	mov	eax, Dest
 	jc	_case_rep
 	; 字面量路径。lc 决定字面量上下文中前一个字节的位移量；从 C 参数槽
 	; 读取 lc 放入 CL，执行变量移位。后续根据历史字节和已解出的高位选概率项。
-	mov	ecx, [ebp+40]
+	mov	ecx, [ebp+36]
 	shl	ebx, cl
 	mov	bl, 0
 	lea	ecx, [ebx+ebx*2+2048]
@@ -419,21 +407,19 @@ _copy:	pop	edx
 	; end marker、达到 dst_end 或调试版发现匹配越界都会到这里。先保存当前
 	; 输出末地址作为返回值，再丢弃局部变量帧并恢复非易失寄存器；cdecl 调用者清栈。
 _end:
-	%ifdef LZMA_C_API_LZMA2
-		; 写回 C 管理的状态；range/code 与输入指针仍是块内临时值。
-		mov	eax, _context
-		mov	ecx, _state
-		mov	[eax], ecx
-		mov	ecx, _rep0
-		mov	[eax+4], ecx
-		mov	ecx, _rep1
-		mov	[eax+8], ecx
-		mov	ecx, _rep2
-		mov	[eax+12], ecx
-		mov	ecx, _rep3
-		mov	[eax+16], ecx
-		mov	[eax+20], bl
-	%endif
+	; 所有模式都把状态写回同一 context，供调用方重置或下一 LZMA2 块续解。
+	mov	eax, _context
+	mov	ecx, _state
+	mov	[eax], ecx
+	mov	ecx, _rep0
+	mov	[eax+4], ecx
+	mov	ecx, _rep1
+	mov	[eax+8], ecx
+	mov	ecx, _rep2
+	mov	[eax+12], ecx
+	mov	ecx, _rep3
+	mov	[eax+16], ecx
+	mov	[eax+20], bl
 
 %ifdef LZMA_C_API_DEBUG
 	mov	eax, Dest

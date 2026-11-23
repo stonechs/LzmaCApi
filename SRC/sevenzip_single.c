@@ -277,7 +277,7 @@ static int decode_properties(const uint8_t *props, unsigned *lc,
 }
 
 /*
- * 解压一个已解析的 folder。workspace 按当前 LZMA 核心的概率表布局临时分配；
+ * 解压一个已解析的 folder。workspace 包含统一状态前缀和概率表；
  * 调试版先限制压缩区间与输出容量，再调用已有 C API。发布版由调用方保证边界。
  */
 static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
@@ -307,7 +307,8 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
     (void)output_capacity;
 #endif
     if (!decode_properties(f->properties, &lc, &lp, &pb)) return SEVENZIP_UNSUPPORTED;
-    workspace_size = (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
+    workspace_size = LZMA_C_API_CONTEXT_SIZE +
+                     (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
     workspace = malloc(workspace_size);
     if (!workspace) return SEVENZIP_MEMORY_ERROR;
     rc = lzma_c_api_decode(archive + f->packed_offset, f->packed_size,

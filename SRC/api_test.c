@@ -115,7 +115,8 @@ int main(int argc, char **argv)
         goto done;
     }
     dst = (uint8_t *)malloc(expected_size ? expected_size : 1);
-    workspace_size = (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
+    workspace_size = LZMA_C_API_CONTEXT_SIZE +
+                     (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
     workspace = malloc(workspace_size);
     if (!dst || !workspace || workspace_size == 0) {
         fprintf(stderr, "could not allocate test buffers\n");

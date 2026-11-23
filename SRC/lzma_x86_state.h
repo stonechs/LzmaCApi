@@ -1,11 +1,11 @@
 #ifndef LZMA_X86_STATE_H
 #define LZMA_X86_STATE_H
 
-#ifdef LZMA_C_API_LZMA2
 #include <stdint.h>
+#include "lzma_c_api.h"
 
-/* 由 C 持有并传给统一汇编入口的跨压缩块状态。 */
-typedef struct LzmaX86State {
+/* 所有路径统一使用的工作区前缀；概率表紧随结构体之后。 */
+typedef struct LzmaX86Context {
     uint32_t state;
     uint32_t rep0;
     uint32_t rep1;
@@ -14,21 +14,28 @@ typedef struct LzmaX86State {
     uint8_t previous;
     uint8_t reserved[3];
     uint32_t position_bias;
-} LzmaX86State;
+} LzmaX86Context;
 
-static void lzma_x86_state_reset(LzmaX86State *state)
+typedef char LzmaX86Context_size_must_match_public_constant[
+    sizeof(LzmaX86Context) == LZMA_C_API_CONTEXT_SIZE ? 1 : -1];
+
+static uint16_t *lzma_x86_probabilities(LzmaX86Context *context)
 {
-    state->state = 0;
-    state->rep0 = 1;
-    state->rep1 = 1;
-    state->rep2 = 1;
-    state->rep3 = 1;
-    state->previous = 0;
-    state->reserved[0] = 0;
-    state->reserved[1] = 0;
-    state->reserved[2] = 0;
-    state->position_bias = 0;
+    return (uint16_t *)((uint8_t *)context + sizeof(*context));
 }
-#endif
+
+static void lzma_x86_context_reset(LzmaX86Context *context)
+{
+    context->state = 0;
+    context->rep0 = 1;
+    context->rep1 = 1;
+    context->rep2 = 1;
+    context->rep3 = 1;
+    context->previous = 0;
+    context->reserved[0] = 0;
+    context->reserved[1] = 0;
+    context->reserved[2] = 0;
+    context->position_bias = 0;
+}
 
 #endif

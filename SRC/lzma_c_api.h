@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* workspace 前缀保存 x86 解码状态，概率表从此前缀之后开始。 */
+#define LZMA_C_API_CONTEXT_SIZE 28u
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -29,14 +32,15 @@ typedef enum LzmaCApiResult {
  *
  * 基本调用步骤：
  *   1. 按下式计算 workspace 字节数，并分配 workspace 和 dst：
- *        (2048 + (768 << (lc + lp))) * sizeof(uint16_t)
+ *        LZMA_C_API_CONTEXT_SIZE + (2048 + (768 << (lc + lp))) * sizeof(uint16_t)
  *      公式属于当前解码核心的内存布局，不是 LZMA 协议常量。
  *   2. 调用 lzma_c_api_decode，并检查返回值是否为 LZMA_C_API_OK。
  *   3. 调试构建成功时，dst_size 给出实际解压字节数，应与 output_size 相同；
  *      精简构建不写 dst_size，调用者应按已知的 output_size 使用输出。
  *
  * 示例（省略输入数据的读取及错误清理）：
- *   size_t ws_size = (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
+ *   size_t ws_size = LZMA_C_API_CONTEXT_SIZE +
+ *                    (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
  *   void *workspace = malloc(ws_size);
  *   uint8_t *dst = (uint8_t *)malloc(output_size);
  *   size_t dst_size = 0;
@@ -48,7 +52,9 @@ typedef enum LzmaCApiResult {
  *   free(workspace);
  *
  * 参数约束：lc <= 8、lp <= 4、lc + lp <= 12、pb <= 4。workspace 必须由
- * 调用者提供并按上述公式分配；dst_capacity 必须不小于 output_size。
+ * 调用者提供并按上述公式分配，workspace 至少 4 字节对齐；前 28 字节为
+ * 解码状态、其后为概率表；
+ * dst_capacity 必须不小于 output_size。
  * src、workspace 必须指向有效内存；调试构建还要求 dst_size 有效。
  * 精简构建忽略 dst_size，可传 NULL。
  * 输入、输出和 workspace 缓冲区不得重叠。output_size 为 0 时 dst 可以为
@@ -67,7 +73,7 @@ typedef enum LzmaCApiResult {
  *   LZMA_C_API_ALLOCATION_FAILED   为兼容保留；静态汇编版本不再分配代码缓冲区。
  *   LZMA_C_API_CODE_SETUP_FAILED   为兼容保留；当前静态解码实现不会返回此值。
  *
- * C 接口根据 lc/lp 在调用前把 workspace 中的概率项初始化为 1024；
+ * C 接口根据 lc/lp 在调用前把 workspace 状态前缀之后的概率项初始化为 1024；
  * workspace_size 用于调试版容量检查，不作为汇编初始化计数。当前实现不会修改
  * 静态汇编代码，也不需要可写可执行内存。只要每次调用使用各自不重叠的输入、
  * 输出和 workspace 缓冲区，就可以并发调用。

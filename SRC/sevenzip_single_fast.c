@@ -14,20 +14,12 @@
 
 #ifdef LZMA_C_API_DEBUG
 extern uint8_t *__cdecl lzma_static_x86_run(
-    const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
-    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb
-#ifdef LZMA_C_API_LZMA2
-    , LzmaX86State *state
-#endif
-    );
+    const uint8_t *src, uint8_t *dst, void *context, size_t output_size,
+    unsigned lc, unsigned lp, unsigned pb);
 #else
 extern void __cdecl lzma_static_x86_run(
-    const uint8_t *src, uint8_t *dst, void *workspace, size_t output_size,
-    size_t workspace_size, unsigned lc, unsigned lp, unsigned pb
-#ifdef LZMA_C_API_LZMA2
-    , LzmaX86State *state
-#endif
-    );
+    const uint8_t *src, uint8_t *dst, void *context, size_t output_size,
+    unsigned lc, unsigned lp, unsigned pb);
 #endif
 
 typedef struct FastFolder {
@@ -41,7 +33,8 @@ typedef struct FastFolder {
 
 static void initialize_probabilities(void *workspace, size_t probability_count)
 {
-    uint16_t *probabilities = (uint16_t *)workspace;
+    uint16_t *probabilities =
+        lzma_x86_probabilities((LzmaX86Context *)workspace);
     size_t i;
     for (i = 0; i < probability_count; ++i)
         probabilities[i] = 1024;
@@ -111,7 +104,7 @@ static uint16_t read_u16be_fast(const uint8_t **cursor)
 static SevenZipResult decode_lzma2_stream(
     const uint8_t *src, size_t src_size, uint8_t dictionary_property,
     uint8_t *output, size_t output_size, size_t output_capacity,
-    void *workspace, size_t workspace_size, LzmaX86State *state)
+    LzmaX86Context *context)
 {
     const uint8_t *cursor = src;
     const uint8_t *input_end = src + src_size;
@@ -129,7 +122,7 @@ static SevenZipResult decode_lzma2_stream(
     (void)output_capacity;
 #endif
     (void)dictionary_property; /* 字典窗口约束来自有效码流；输出本身就是历史窗口。 */
-    lzma_x86_state_reset(state);
+    lzma_x86_context_reset(context);
 
     for (;;) {
         unsigned control;
@@ -180,7 +173,7 @@ static SevenZipResult decode_lzma2_stream(
         {
             size_t chunk_packed = (size_t)read_u16be_fast(&cursor) + 1;
             uint8_t property;
-            size_t probability_count, probability_bytes;
+            size_t probability_count;
             uint8_t *chunk_end;
 
             if (control >= 0xC0) {
@@ -201,10 +194,10 @@ static SevenZipResult decode_lzma2_stream(
 #ifdef LZMA_C_API_DEBUG
                 if (!properties_ready) return SEVENZIP_DECODE_ERROR;
 #endif
-                lzma_x86_state_reset(state);
+                lzma_x86_context_reset(context);
                 properties_ready = 1;
                 probability_count = 2048u + (768u << (lc + lp));
-                initialize_probabilities(workspace, probability_count);
+                initialize_probabilities(context, probability_count);
             }
 #ifdef LZMA_C_API_DEBUG
             if (!properties_ready || chunk_output > output_size - produced ||
@@ -213,22 +206,19 @@ static SevenZipResult decode_lzma2_stream(
             if (cursor[0] != 0) return SEVENZIP_DECODE_ERROR;
 #endif
             probability_count = 2048u + (768u << (lc + lp));
-            probability_bytes = probability_count * sizeof(uint16_t);
-            state->previous = produced > dictionary_base ? output[produced - 1] : 0;
-            state->position_bias = (uint32_t)(produced - dictionary_base) -
-                                   (uint32_t)(uintptr_t)(output + produced);
+            context->previous = produced > dictionary_base ? output[produced - 1] : 0;
+            context->position_bias = (uint32_t)(produced - dictionary_base) -
+                                     (uint32_t)(uintptr_t)(output + produced);
 #ifdef LZMA_C_API_DEBUG
             chunk_end = lzma_static_x86_run(
-                cursor, output + produced, workspace, chunk_output,
-                probability_bytes, lc, lp, pb, state);
+                cursor, output + produced, context, chunk_output, lc, lp, pb);
             if (chunk_end < output + produced ||
                 (size_t)(chunk_end - (output + produced)) != chunk_output)
                 return SEVENZIP_DECODE_ERROR;
 #else
             (void)chunk_end;
             lzma_static_x86_run(
-                cursor, output + produced, workspace, chunk_output,
-                probability_bytes, lc, lp, pb, state);
+                cursor, output + produced, context, chunk_output, lc, lp, pb);
 #endif
             cursor += chunk_packed;
             produced += chunk_output;
@@ -250,11 +240,9 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
                                     size_t *output_size)
 {
     unsigned lc, lp, pb;
-    size_t workspace_size, allocation_size;
+    size_t probability_bytes, allocation_size;
     void *workspace;
-#ifdef LZMA_C_API_LZMA2
-    LzmaX86State *state;
-#endif
+    LzmaX86Context *context;
 #ifdef LZMA_C_API_DEBUG
     uint8_t *end;
 #endif
@@ -278,75 +266,47 @@ static SevenZipResult decode_folder(const uint8_t *archive, size_t archive_size,
     if (folder->method == FAST_METHOD_LZMA2) {
         if (folder->properties_size != 1 || folder->properties[0] > 40)
             return SEVENZIP_UNSUPPORTED;
-        workspace_size = LZMA2_MAX_PROB_COUNT * sizeof(uint16_t);
+        probability_bytes = LZMA2_MAX_PROB_COUNT * sizeof(uint16_t);
     } else
 #endif
     {
         if (!decode_properties(folder->properties, &lc, &lp, &pb))
             return SEVENZIP_UNSUPPORTED;
-        workspace_size = (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
+        probability_bytes = (2048u + (768u << (lc + lp))) * sizeof(uint16_t);
     }
-    allocation_size = workspace_size;
-#ifdef LZMA_C_API_LZMA2
-    allocation_size += sizeof(LzmaX86State);
-#endif
+    allocation_size = LZMA_C_API_CONTEXT_SIZE + probability_bytes;
     workspace = malloc(allocation_size);
     if (!workspace) return SEVENZIP_MEMORY_ERROR;
-#ifdef LZMA_C_API_LZMA2
-    state = (LzmaX86State *)((uint8_t *)workspace + workspace_size);
-    lzma_x86_state_reset(state);
-#endif
+    context = (LzmaX86Context *)workspace;
+    lzma_x86_context_reset(context);
     if (folder->method == FAST_METHOD_LZMA1) {
-        initialize_probabilities(workspace, workspace_size / sizeof(uint16_t));
+        initialize_probabilities(context, probability_bytes / sizeof(uint16_t));
+#ifdef LZMA_C_API_LZMA2
+        context->position_bias = 0u - (uint32_t)(uintptr_t)output;
+#endif
 #ifdef LZMA_C_API_DEBUG
         if (archive[folder->packed_offset] != 0) {
             free(workspace);
             return SEVENZIP_DECODE_ERROR;
         }
-#ifdef LZMA_C_API_LZMA2
-        state->position_bias = 0u - (uint32_t)(uintptr_t)output;
         end = lzma_static_x86_run(
-            archive + folder->packed_offset, output, workspace,
-            folder->unpacked_size, workspace_size, lc, lp, pb
-#ifdef LZMA_C_API_LZMA2
-            , state
-#endif
-            );
-#else
-        end = lzma_static_x86_run(
-            archive + folder->packed_offset, output, workspace,
-            folder->unpacked_size, workspace_size, lc, lp, pb
-#ifdef LZMA_C_API_LZMA2
-            , state
-#endif
-            );
-#endif
+            archive + folder->packed_offset, output, context,
+            folder->unpacked_size, lc, lp, pb);
         if (end < output || (size_t)(end - output) != folder->unpacked_size) {
             free(workspace);
             return SEVENZIP_DECODE_ERROR;
         }
 #else
-        #ifdef LZMA_C_API_LZMA2
-        state->position_bias = 0u - (uint32_t)(uintptr_t)output;
         lzma_static_x86_run(
-            archive + folder->packed_offset, output, workspace,
-            folder->unpacked_size, workspace_size, lc, lp, pb
-#ifdef LZMA_C_API_LZMA2
-            , state
-#endif
-            );
-        #else
-        lzma_static_x86_run(
-            archive + folder->packed_offset, output, workspace,
-            folder->unpacked_size, workspace_size, lc, lp, pb);
-        #endif
+            archive + folder->packed_offset, output, context,
+            folder->unpacked_size, lc, lp, pb);
 #endif
     } else {
 #ifdef LZMA_C_API_LZMA2
         SevenZipResult result = decode_lzma2_stream(
             archive + folder->packed_offset, folder->packed_size,
             folder->properties[0], output, folder->unpacked_size,
-            output_capacity, workspace, workspace_size, state);
+            output_capacity, context);
         if (result != SEVENZIP_OK) {
             free(workspace);
             return result;

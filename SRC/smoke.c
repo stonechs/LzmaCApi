@@ -19,7 +19,8 @@ int main(int argc, char **argv)
     f = fopen(argv[2], "rb"); if (!f) return 5;
     fseek(f, 0, SEEK_END); long expected = ftell(f); rewind(f);
     dst = (uint8_t *)malloc((size_t)expected); if (!dst) return 6;
-    ws_size = (2048u + (768u << (3 + 0))) * sizeof(uint16_t);
+    ws_size = LZMA_C_API_CONTEXT_SIZE +
+              (2048u + (768u << (3 + 0))) * sizeof(uint16_t);
     ws = malloc(ws_size); if (!ws) return 7;
     rc = lzma_c_api_decode(src, (size_t)n, dst, (size_t)expected,
                            (size_t)expected, NULL, 3, 0, 2, ws, ws_size);
