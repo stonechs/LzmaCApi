@@ -13,6 +13,17 @@ Updated: 2026-11-22
 
 ## Current state
 
+- **V0.6.5（代码提交 `ba3cfe3f0dfbba499ef97c9b294180a8e97e5f40`；概率项数单次计算）**：`lzma_c_api_decode` 在 Debug 参数检查后只计算一次
+  `2048 + (768 << (lc + lp))`，结果同时用于 workspace 容量检查和概率表初始化；
+  `decode_lzma2_stream` 删除概率表重置后未使用的重复赋值。Clang i686 release/debug
+  构建、raw API 3 组属性、普通及宽属性 7z、LZMA2 宏下 raw API 与 4 类归档、
+  `forTest/` 12 个归档均通过。构建只出现测试程序已有的 `fopen` 弃用警告。map/exe
+  位于 `dist/builds/V0.6.4_20261122_214056_445_7fe72065/`、
+  `V0.6.4_fast_lzma2_20261122_214102_707_fa2c680f/`、
+  `V0.6.4_sevenzip_20261122_214112_560_7b27462e/` 和
+  `V0.6.4_forTest_20261122_214116_783_453366db/`；归档逐字节结果见
+  `work/forTest_decode_20261122_214116_694/results.csv`。快照：
+  `dist/V0.6.5_probability_count_once/`。
 - **V0.6.4（代码提交 `f147d1304a2246535b7cd67c10a8011f0284eb37`）**：普通
   LZMA1 和 `LZMA_C_API_LZMA2` 构建统一使用 28 字节 `LzmaX86Context` 前缀，
   后接概率表；C 初始化概率表并重置状态，汇编从同一 context 读取/写回状态。
